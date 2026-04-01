@@ -32,7 +32,19 @@ import { PDFTemplate } from './components/PDFTemplate';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import SignatureCanvas from 'react-signature-canvas';
-import { db } from './lib/db';
+import type { UserProfile, WorkEntry } from './lib/db';
+import {
+  clearMonth,
+  deleteEntryDay,
+  initStorage,
+  loadAllEntries,
+  loadEntriesForMonth,
+  loadProfile,
+  replaceMonthEntries,
+  restoreData,
+  saveProfile,
+} from './lib/storage';
+import { playShortBeep } from './lib/beep';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -69,11 +81,11 @@ export default function App() {
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
-  // Load profile and entries from Dexie
+  // Load profile and entries (SQLite nativo no Android; Dexie no navegador)
   useEffect(() => {
     const loadData = async () => {
-      // Load Profile
-      const profile = await db.profile.get('current');
+      await initStorage();
+      const profile = await loadProfile();
       if (profile) {
         setName(profile.name);
         setRole(profile.role as any);
@@ -83,8 +95,7 @@ export default function App() {
         if (profile.defaultProject) setDefaultProject(profile.defaultProject);
       }
 
-      // Load Entries for current month
-      const savedEntries = await db.entries.where('monthKey').equals(monthKey).toArray();
+      const savedEntries = await loadEntriesForMonth(monthKey);
       const entriesMap: Record<string, Partial<WorkDay>> = {};
       savedEntries.forEach(entry => {
         entriesMap[entry.day] = {
@@ -105,7 +116,7 @@ export default function App() {
   // Load history
   useEffect(() => {
     const loadHistory = async () => {
-      const allEntries = await db.entries.toArray();
+      const allEntries = await loadAllEntries();
       const historyMap: Record<string, { hours: number, days: Set<number> }> = {};
       
       allEntries.forEach(entry => {
@@ -131,43 +142,37 @@ export default function App() {
     loadHistory();
   }, [entries]);
 
-  // Save Profile to Dexie
   useEffect(() => {
     if (isInitialMount.current) return;
-    db.profile.put({
+    const p: UserProfile = {
       id: 'current',
       name,
       role,
       hourlyRate,
       signature: signature || '',
       theme,
-      defaultProject
-    });
+      defaultProject,
+    };
+    void saveProfile(p);
   }, [name, role, hourlyRate, signature, theme, defaultProject]);
 
-  // Save Entries to Dexie
   useEffect(() => {
     if (isInitialMount.current) return;
-    
+
     const saveEntries = async () => {
-      // Clear current month entries first to avoid duplicates or stale data
-      await db.entries.where('monthKey').equals(monthKey).delete();
-      
-      const entriesToSave = Object.entries(entries).map(([day, data]) => ({
+      const entriesToSave: WorkEntry[] = Object.entries(entries).map(([day, data]) => ({
         monthKey,
-        day: parseInt(day),
+        day: parseInt(day, 10),
         project: data.project || '',
         description: data.description || '',
         hours: data.hours || '',
-        marked: data.marked || false
+        marked: data.marked || false,
       }));
-      
-      if (entriesToSave.length > 0) {
-        await db.entries.bulkAdd(entriesToSave);
-      }
+
+      await replaceMonthEntries(monthKey, entriesToSave);
     };
-    
-    saveEntries();
+
+    void saveEntries();
   }, [entries, monthKey]);
 
   const handleInstallClick = async () => {
@@ -212,8 +217,7 @@ export default function App() {
       }
     }));
     
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
-    audio.play().catch(e => console.log('Audio play failed', e));
+    playShortBeep();
     setSavingDay(day);
     setTimeout(() => setSavingDay(null), 1000);
   };
@@ -231,8 +235,7 @@ export default function App() {
       }
     }));
     
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
-    audio.play().catch(e => console.log('Audio play failed', e));
+    playShortBeep();
     setSavingDay(day);
     setTimeout(() => setSavingDay(null), 1000);
   };
@@ -244,7 +247,7 @@ export default function App() {
         delete newEntries[day];
         return newEntries;
       });
-      db.entries.where({ day, monthKey }).delete();
+      void deleteEntryDay(day, monthKey);
     }
   };
 
@@ -431,8 +434,8 @@ export default function App() {
   };
 
   const handleBackupData = async () => {
-    const profile = await db.profile.get('current');
-    const entries = await db.entries.toArray();
+    const profile = await loadProfile();
+    const entries = await loadAllEntries();
     
     const backupData = {
       profile,
@@ -459,16 +462,7 @@ export default function App() {
       try {
         const data = JSON.parse(e.target?.result as string);
         if (confirm('Isso irá substituir todos os seus dados atuais. Deseja continuar?')) {
-          await db.profile.clear();
-          await db.entries.clear();
-          
-          if (data.profile) {
-            await db.profile.put(data.profile);
-          }
-          if (data.entries && Array.isArray(data.entries)) {
-            await db.entries.bulkAdd(data.entries);
-          }
-          
+          await restoreData(data.profile, data.entries ?? []);
           window.location.reload();
         }
       } catch (err) {
@@ -853,7 +847,7 @@ export default function App() {
                 onClick={() => {
                   if (confirm('Tem certeza que deseja limpar todos os dados deste mês?')) {
                     setEntries({});
-                    db.entries.where('monthKey').equals(monthKey).delete();
+                    void clearMonth(monthKey);
                   }
                 }}
                 className={cn(
