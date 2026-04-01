@@ -25,3 +25,5 @@ Para gerar o APK Android após alterar o front-end: `npm run android:build` (req
 O **PDF do ponto** é gerado **no telemóvel** com `jsPDF` (texto e tabela), sem servidor e **sem API Gemini**. No Android, a partilha usa os plugins `@capacitor/filesystem` e `@capacitor/share` para enviar o ficheiro real às apps (WhatsApp, etc.).
 
 Interface com **abas** (Painel, Análises, Projeto, Relatório, Gestão), gráficos (**Recharts**: donut, radar, barras, heatmap), foto de perfil opcional (guardada em base64 no perfil) e tema escuro tipo dashboard GSI (alternar sol/lua para claro).
+
+Ao abrir o app, uma **intro animada** (logo G + “GSI Tracker”) com jingle curto em Web Audio (~2,4 s).

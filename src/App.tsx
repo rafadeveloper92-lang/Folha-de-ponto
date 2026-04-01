@@ -60,6 +60,8 @@ import {
 } from './components/gsi/GsiCharts';
 import { GsiDashboardHero } from './components/gsi/GsiDashboardHero';
 import { fileToCompressedDataUrl } from './lib/profilePhoto';
+import { SplashIntro } from './components/SplashIntro';
+import { playIntroSound } from './lib/introSound';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -81,13 +83,24 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<
     'dashboard' | 'analytics' | 'project' | 'report' | 'manage'
   >('dashboard');
+  const [showSplash, setShowSplash] = useState(true);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const sigPad = useRef<SignatureCanvas>(null);
   const isInitialMount = useRef(true);
   const isChangingMonth = useRef(false);
+  const introPlayed = useRef(false);
 
   const monthKey = format(currentDate, 'MM_yyyy');
+
+  useEffect(() => {
+    if (!introPlayed.current) {
+      introPlayed.current = true;
+      void playIntroSound();
+    }
+    const t = window.setTimeout(() => setShowSplash(false), 2400);
+    return () => clearTimeout(t);
+  }, []);
 
   // PWA Install Logic
   useEffect(() => {
@@ -535,6 +548,10 @@ export default function App() {
       "min-h-screen transition-colors duration-300 pb-10",
       theme === 'dark' ? "bg-black text-white" : "bg-slate-50 text-slate-900"
     )}>
+      <AnimatePresence>
+        {showSplash && <SplashIntro key="splash-intro" />}
+      </AnimatePresence>
+
       {/* PWA Install Banner */}
       <AnimatePresence>
         {showInstallBanner && (
