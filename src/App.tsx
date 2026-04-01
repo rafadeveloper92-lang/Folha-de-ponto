@@ -62,6 +62,8 @@ import { GsiDashboardHero } from './components/gsi/GsiDashboardHero';
 import { fileToCompressedDataUrl } from './lib/profilePhoto';
 import { SplashIntro } from './components/SplashIntro';
 import { playIntroSound } from './lib/introSound';
+import { OnboardingModal } from './components/OnboardingModal';
+import { GsiQrLightbox } from './components/GsiQrLightbox';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -77,13 +79,20 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [history, setHistory] = useState<{ month: string, hours: number, days: number }[]>([]);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>('light');
   const [defaultProject, setDefaultProject] = useState('');
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<
     'dashboard' | 'analytics' | 'project' | 'report' | 'manage'
   >('dashboard');
   const [showSplash, setShowSplash] = useState(true);
+  const [onboardingComplete, setOnboardingComplete] = useState(false);
+  const [roleLocked, setRoleLocked] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [employeeCode, setEmployeeCode] = useState<string | null>(null);
+  const [qrLightboxOpen, setQrLightboxOpen] = useState(false);
+  const [employeePdfBase64, setEmployeePdfBase64] = useState<string | null>(null);
+  const [profileReady, setProfileReady] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const sigPad = useRef<SignatureCanvas>(null);
@@ -126,6 +135,12 @@ export default function App() {
         setTheme(profile.theme ?? 'light');
         if (profile.defaultProject) setDefaultProject(profile.defaultProject);
         if (profile.profilePhoto) setProfilePhoto(profile.profilePhoto);
+        setOnboardingComplete(!!profile.onboardingComplete);
+        setRoleLocked(!!profile.roleLocked);
+        if (profile.qrDataUrl) setQrDataUrl(profile.qrDataUrl);
+        if (profile.employeeCode) setEmployeeCode(profile.employeeCode);
+        if (profile.employeePdfBase64)
+          setEmployeePdfBase64(profile.employeePdfBase64);
       }
 
       const savedEntries = await loadEntriesForMonth(monthKey);
@@ -140,8 +155,9 @@ export default function App() {
         };
       });
       setEntries(entriesMap);
-      
+
       isInitialMount.current = false;
+      setProfileReady(true);
     };
     loadData();
   }, [monthKey]);
@@ -186,9 +202,62 @@ export default function App() {
       theme,
       defaultProject,
       profilePhoto: profilePhoto || undefined,
+      onboardingComplete,
+      roleLocked,
+      qrDataUrl: qrDataUrl || undefined,
+      employeeCode: employeeCode || undefined,
+      employeePdfBase64: employeePdfBase64 || undefined,
     };
     void saveProfile(p);
-  }, [name, role, hourlyRate, signature, theme, defaultProject, profilePhoto]);
+  }, [
+    name,
+    role,
+    hourlyRate,
+    signature,
+    theme,
+    defaultProject,
+    profilePhoto,
+    onboardingComplete,
+    roleLocked,
+    qrDataUrl,
+    employeeCode,
+    employeePdfBase64,
+  ]);
+
+  const handleOnboardingComplete = async (data: {
+    name: string;
+    role: 'Oficial' | 'Ajudante';
+    hourlyRate: number;
+    profilePhoto: string;
+    employeePdfBase64: string;
+    employeeCode: string;
+    qrDataUrl: string;
+  }) => {
+    setName(data.name);
+    setRole(data.role);
+    setHourlyRate(data.hourlyRate);
+    setProfilePhoto(data.profilePhoto);
+    setEmployeePdfBase64(data.employeePdfBase64);
+    setEmployeeCode(data.employeeCode);
+    setQrDataUrl(data.qrDataUrl);
+    setOnboardingComplete(true);
+    setRoleLocked(true);
+    await saveProfile({
+      id: 'current',
+      name: data.name,
+      role: data.role,
+      hourlyRate: data.hourlyRate,
+      signature: '',
+      theme,
+      defaultProject: defaultProject || undefined,
+      profilePhoto: data.profilePhoto,
+      onboardingComplete: true,
+      roleLocked: true,
+      employeePdfBase64: data.employeePdfBase64,
+      employeeCode: data.employeeCode,
+      qrDataUrl: data.qrDataUrl,
+    });
+  };
 
   useEffect(() => {
     if (isInitialMount.current) return;
@@ -551,6 +620,21 @@ export default function App() {
       <AnimatePresence>
         {showSplash && <SplashIntro key="splash-intro" />}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {profileReady && !onboardingComplete && !showSplash && (
+          <OnboardingModal key="onboarding" onComplete={handleOnboardingComplete} />
+        )}
+      </AnimatePresence>
+
+      {qrDataUrl && (
+        <GsiQrLightbox
+          open={qrLightboxOpen}
+          onClose={() => setQrLightboxOpen(false)}
+          qrDataUrl={qrDataUrl}
+          label={employeeCode ?? undefined}
+        />
+      )}
 
       {/* PWA Install Banner */}
       <AnimatePresence>
@@ -952,6 +1036,7 @@ export default function App() {
               profilePhoto={profilePhoto}
               onPickPhoto={() => photoInputRef.current?.click()}
               isDark={isDarkUi}
+              roleLocked={roleLocked}
             />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
@@ -1379,6 +1464,53 @@ export default function App() {
               </div>
 
               <div className="flex-grow overflow-y-auto p-6 space-y-8">
+                {employeeCode && (
+                  <section className="space-y-4">
+                    <div
+                      className={cn(
+                        'flex items-center gap-2',
+                        theme === 'dark' ? 'text-white/80' : 'text-slate-600',
+                      )}
+                    >
+                      <User size={20} className="text-blue-500" />
+                      <h3 className="font-black uppercase tracking-widest text-xs">
+                        CÓDIGO DO COLABORADOR
+                      </h3>
+                    </div>
+                    <div
+                      className={cn(
+                        'rounded-2xl border p-4 space-y-3',
+                        theme === 'dark'
+                          ? 'border-white/10 bg-[#141414]'
+                          : 'border-slate-200 bg-slate-50',
+                      )}
+                    >
+                      <p
+                        className={cn(
+                          'text-center font-mono text-2xl font-black tracking-widest',
+                          theme === 'dark' ? 'text-white' : 'text-slate-900',
+                        )}
+                      >
+                        {employeeCode}
+                      </p>
+                      {qrDataUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setQrLightboxOpen(true)}
+                          className={cn(
+                            'w-full py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all active:scale-95',
+                            theme === 'dark'
+                              ? 'bg-blue-600 text-white hover:bg-blue-500'
+                              : 'bg-[#2563EB] text-white hover:bg-blue-600',
+                          )}
+                        >
+                          Ver QR em ecrã inteiro
+                        </button>
+                      )}
+                    </div>
+                  </section>
+                )}
+
                 {/* Hourly Rate Section */}
                 <section className="space-y-4">
                   <div className={cn(

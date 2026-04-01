@@ -10,6 +10,7 @@ type Props = {
   profilePhoto: string | null;
   onPickPhoto: () => void;
   isDark: boolean;
+  roleLocked?: boolean;
 };
 
 export function GsiDashboardHero({
@@ -20,6 +21,7 @@ export function GsiDashboardHero({
   profilePhoto,
   onPickPhoto,
   isDark,
+  roleLocked,
 }: Props) {
   return (
     <div
@@ -30,33 +32,35 @@ export function GsiDashboardHero({
           : 'border-slate-200 bg-white shadow-sm',
       )}
     >
-      <button
-        type="button"
-        onClick={onPickPhoto}
-        className={cn(
-          'relative h-24 w-24 shrink-0 rounded-full border-4 overflow-hidden group',
-          isDark ? 'border-blue-500/40' : 'border-blue-200',
-        )}
-      >
-        {profilePhoto ? (
-          <img src={profilePhoto} alt="" className="h-full w-full object-cover" />
-        ) : (
-          <div
-            className={cn(
-              'h-full w-full flex items-center justify-center text-2xl font-black',
-              isDark ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400',
-            )}
-          >
-            {name?.[0]?.toUpperCase() || '?'}
-          </div>
-        )}
-        <span
-          className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity"
-          aria-hidden
+      <div className="flex shrink-0 items-center gap-3">
+        <button
+          type="button"
+          onClick={onPickPhoto}
+          className={cn(
+            'relative h-24 w-24 rounded-full border-4 overflow-hidden group',
+            isDark ? 'border-blue-500/40' : 'border-blue-200',
+          )}
         >
-          <Camera className="text-white" size={28} />
-        </span>
-      </button>
+          {profilePhoto ? (
+            <img src={profilePhoto} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <div
+              className={cn(
+                'h-full w-full flex items-center justify-center text-2xl font-black',
+                isDark ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400',
+              )}
+            >
+              {name?.[0]?.toUpperCase() || '?'}
+            </div>
+          )}
+          <span
+            className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity"
+            aria-hidden
+          >
+            <Camera className="text-white" size={28} />
+          </span>
+        </button>
+      </div>
       <div className="flex-1 min-w-0 space-y-3">
         <input
           value={name}
@@ -72,7 +76,8 @@ export function GsiDashboardHero({
             <button
               key={r}
               type="button"
-              onClick={() => setRole(r)}
+              disabled={roleLocked}
+              onClick={() => !roleLocked && setRole(r)}
               className={cn(
                 'px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all',
                 role === r
@@ -80,6 +85,7 @@ export function GsiDashboardHero({
                   : isDark
                     ? 'bg-white/5 text-slate-500 hover:bg-white/10'
                     : 'bg-slate-100 text-slate-500',
+                roleLocked && 'opacity-90 cursor-default',
               )}
             >
               {r}
