@@ -2,19 +2,15 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# GSI Tracker — Ponto Digital
 
-This contains everything you need to run your app locally.
+App web (Vite + React) pensado para uso **offline** no dispositivo (PWA / Capacitor).
 
-View your app in AI Studio: https://ai.studio/apps/6480145e-89c3-4161-95bc-730f3220889e
+## Rodar localmente
 
-## Run Locally
+**Pré-requisito:** Node.js
 
-**Prerequisites:**  Node.js
+1. `npm install`
+2. `npm run dev`
 
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Para gerar o APK Android após alterar o front-end: `npm run android:build` (requer Android SDK local) ou use o workflow no GitHub Actions.
