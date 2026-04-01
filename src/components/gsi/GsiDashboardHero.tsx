@@ -72,7 +72,12 @@ export function GsiDashboardHero({
             className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-white/15 bg-white p-1 shadow-lg transition-transform active:scale-95"
             title="Ampliar QR da ficha"
           >
-            <img src={qrDataUrl} alt="QR da ficha GSI" className="h-full w-full object-contain" />
+            <img
+              src={qrDataUrl}
+              alt="QR da ficha GSI"
+              className="h-full w-full object-contain"
+              style={{ imageRendering: 'pixelated' }}
+            />
           </button>
         )}
       </div>

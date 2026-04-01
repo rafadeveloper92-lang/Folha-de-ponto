@@ -42,7 +42,12 @@ export function GsiQrLightbox({ open, onClose, qrDataUrl, label }: Props) {
               </button>
             </div>
             <div className="flex justify-center rounded-2xl bg-white p-4">
-              <img src={qrDataUrl} alt="QR Code" className="h-auto w-full max-w-[280px]" />
+              <img
+                src={qrDataUrl}
+                alt="QR Code"
+                className="h-auto w-full max-w-[min(72vw,420px)]"
+                style={{ imageRendering: 'pixelated' }}
+              />
             </div>
             <p className="mt-4 text-center text-[10px] font-medium uppercase tracking-wider text-slate-500">
               Mostre ao encarregado para marcação de ponto
