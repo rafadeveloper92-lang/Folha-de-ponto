@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS profile (
   hourly_rate REAL NOT NULL,
   signature TEXT NOT NULL,
   theme TEXT,
-  default_project TEXT
+  default_project TEXT,
+  profile_photo TEXT
 );
 CREATE TABLE IF NOT EXISTS entries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,8 +57,8 @@ async function migrateFromDexieIfNeeded(): Promise<void> {
 
   if (profile) {
     await sqlConn.run(
-      `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project)
-       VALUES (?,?,?,?,?,?,?)`,
+      `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo)
+       VALUES (?,?,?,?,?,?,?,?)`,
       [
         profile.id,
         profile.name,
@@ -66,6 +67,7 @@ async function migrateFromDexieIfNeeded(): Promise<void> {
         profile.signature ?? '',
         profile.theme ?? null,
         profile.defaultProject ?? null,
+        profile.profilePhoto ?? null,
       ],
     );
   }
@@ -108,6 +110,11 @@ async function openSqlite(): Promise<void> {
   sqlConn = await sqlite.createConnection(DB_NAME, false, 'no-encryption', 1, false);
   await sqlConn.open();
   await sqlConn.execute(SCHEMA, false);
+  try {
+    await sqlConn.execute('ALTER TABLE profile ADD COLUMN profile_photo TEXT;', false);
+  } catch {
+    /* coluna já existe */
+  }
   await migrateFromDexieIfNeeded();
   useNativeSqlite = true;
 }
@@ -132,7 +139,8 @@ export function storageUsesNativeSqlite(): boolean {
 export async function loadProfile(): Promise<UserProfile | undefined> {
   if (useNativeSqlite && sqlConn) {
     const res = await sqlConn.query(
-      `SELECT id, name, role, hourly_rate AS hourlyRate, signature, theme, default_project AS defaultProject
+      `SELECT id, name, role, hourly_rate AS hourlyRate, signature, theme, default_project AS defaultProject,
+              profile_photo AS profilePhoto
        FROM profile WHERE id = 'current'`,
       [],
     );
@@ -148,6 +156,10 @@ export async function loadProfile(): Promise<UserProfile | undefined> {
       signature: String(row.signature ?? ''),
       theme: (row.theme as 'dark' | 'light') || undefined,
       defaultProject: row.defaultProject != null ? String(row.defaultProject) : undefined,
+      profilePhoto:
+        row.profilePhoto != null && String(row.profilePhoto).length > 0
+          ? String(row.profilePhoto)
+          : undefined,
     };
   }
   return (await db.profile.get('current')) ?? undefined;
@@ -180,8 +192,8 @@ export async function loadAllEntries(): Promise<WorkEntry[]> {
 export async function saveProfile(p: UserProfile): Promise<void> {
   if (useNativeSqlite && sqlConn) {
     await sqlConn.run(
-      `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project)
-       VALUES (?,?,?,?,?,?,?)`,
+      `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo)
+       VALUES (?,?,?,?,?,?,?,?)`,
       [
         p.id,
         p.name,
@@ -190,6 +202,7 @@ export async function saveProfile(p: UserProfile): Promise<void> {
         p.signature ?? '',
         p.theme ?? null,
         p.defaultProject ?? null,
+        p.profilePhoto ?? null,
       ],
     );
     return;
@@ -251,8 +264,8 @@ export async function restoreData(profile: UserProfile | undefined, entries: Wor
     await sqlConn.execute('DELETE FROM profile;', true);
     if (profile) {
       await sqlConn.run(
-        `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project)
-         VALUES (?,?,?,?,?,?,?)`,
+        `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo)
+         VALUES (?,?,?,?,?,?,?,?)`,
         [
           profile.id,
           profile.name,
@@ -261,6 +274,7 @@ export async function restoreData(profile: UserProfile | undefined, entries: Wor
           profile.signature ?? '',
           profile.theme ?? null,
           profile.defaultProject ?? null,
+          profile.profilePhoto ?? null,
         ],
       );
     }

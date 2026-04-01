@@ -21,7 +21,14 @@ import {
   Database,
   Share2,
   Sun,
-  Moon
+  Moon,
+  LayoutDashboard,
+  LineChart,
+  MapPin,
+  FileText,
+  Table2,
+  CheckCircle2,
+  Timer,
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -43,6 +50,16 @@ import {
 import { playShortBeep } from './lib/beep';
 import { buildGsiPdfBlob } from './lib/buildGsiPdf';
 import { downloadPdfBlob, shareOrDownloadPdf } from './lib/pdfHelpers';
+import { gsi } from './gsi/colors';
+import {
+  HoursDonut,
+  TeamRadar,
+  MonthHeatmap,
+  MiniBarValue,
+  BudgetBar,
+} from './components/gsi/GsiCharts';
+import { GsiDashboardHero } from './components/gsi/GsiDashboardHero';
+import { fileToCompressedDataUrl } from './lib/profilePhoto';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -58,9 +75,14 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [history, setHistory] = useState<{ month: string, hours: number, days: number }[]>([]);
-  const [theme, setTheme] = useState<'dark' | 'light'>('light');
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [defaultProject, setDefaultProject] = useState('');
-  
+  const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<
+    'dashboard' | 'analytics' | 'project' | 'report' | 'manage'
+  >('dashboard');
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
   const sigPad = useRef<SignatureCanvas>(null);
   const isInitialMount = useRef(true);
   const isChangingMonth = useRef(false);
@@ -90,6 +112,7 @@ export default function App() {
         setSignature(profile.signature || null);
         setTheme(profile.theme ?? 'light');
         if (profile.defaultProject) setDefaultProject(profile.defaultProject);
+        if (profile.profilePhoto) setProfilePhoto(profile.profilePhoto);
       }
 
       const savedEntries = await loadEntriesForMonth(monthKey);
@@ -149,9 +172,10 @@ export default function App() {
       signature: signature || '',
       theme,
       defaultProject,
+      profilePhoto: profilePhoto || undefined,
     };
     void saveProfile(p);
-  }, [name, role, hourlyRate, signature, theme, defaultProject]);
+  }, [name, role, hourlyRate, signature, theme, defaultProject, profilePhoto]);
 
   useEffect(() => {
     if (isInitialMount.current) return;
@@ -465,6 +489,47 @@ export default function App() {
     }
   };
 
+  const handleProfilePhotoChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const f = e.target.files?.[0];
+    if (!f?.type.startsWith('image/')) return;
+    try {
+      setProfilePhoto(await fileToCompressedDataUrl(f));
+    } catch {
+      alert('Não foi possível carregar a foto.');
+    }
+    e.target.value = '';
+  };
+
+  const heatIntensity: Record<number, number> = {};
+  days.forEach((d) => {
+    const dn = d.getDate();
+    const e = entries[dn];
+    if (!e?.hours) {
+      heatIntensity[dn] = 0;
+      return;
+    }
+    const m = e.hours.match(/\d+/);
+    const h = m ? parseInt(m[0], 10) : 0;
+    heatIntensity[dn] = Math.min(4, Math.max(1, Math.ceil(h / 2.5)));
+  });
+
+  const oficialRadar = role === 'Oficial' ? 72 : 38;
+  const ajudanteRadar = role === 'Ajudante' ? 72 : 38;
+  const budgetPct =
+    totalHours > 0 ? Math.min(100, Math.round((totalHours / 200) * 100)) : 0;
+
+  const tabs = [
+    { id: 'dashboard' as const, label: 'Painel', icon: LayoutDashboard },
+    { id: 'analytics' as const, label: 'Análises', icon: LineChart },
+    { id: 'project' as const, label: 'Projeto', icon: MapPin },
+    { id: 'report' as const, label: 'Relatório', icon: FileText },
+    { id: 'manage' as const, label: 'Gestão', icon: Table2 },
+  ];
+
+  const isDarkUi = theme === 'dark';
+
   return (
     <div className={cn(
       "min-h-screen transition-colors duration-300 pb-10",
@@ -588,57 +653,346 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        {/* User Info Card */}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleProfilePhotoChange}
+      />
+
+      <main
+        className={cn(
+          'max-w-5xl mx-auto px-4 py-6 pb-28',
+          isDarkUi && 'min-h-screen',
+        )}
+        style={isDarkUi ? { background: gsi.navyBg } : undefined}
+      >
+        <nav
+          className={cn(
+            'flex gap-1 overflow-x-auto pb-3 mb-6 -mx-1 px-1 scrollbar-hide',
+            isDarkUi && 'border-b border-white/5',
+          )}
+        >
+          {tabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActiveTab(id)}
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-[10px] font-black uppercase tracking-wider transition-all',
+                activeTab === id
+                  ? isDarkUi
+                    ? 'bg-blue-600 text-white shadow-lg'
+                    : 'bg-blue-600 text-white'
+                  : isDarkUi
+                    ? 'bg-white/5 text-slate-500 hover:bg-white/10'
+                    : 'bg-slate-100 text-slate-600',
+              )}
+            >
+              <Icon size={14} />
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {activeTab === 'analytics' && (
+          <div
+            className={cn(
+              'rounded-3xl border p-6 mb-8',
+              isDarkUi
+                ? 'border-blue-500/20 bg-[#151d32]'
+                : 'bg-white border-slate-200',
+            )}
+          >
+            <TeamRadar oficialPct={oficialRadar} ajudantePct={ajudanteRadar} />
+            <p className="text-center text-xs text-slate-500 mt-2">
+              Distribuição por cargo no período atual (simulado a partir do seu
+              perfil).
+            </p>
+          </div>
+        )}
+
+        {activeTab === 'project' && (
+          <div className="space-y-6 mb-8">
+            <div
+              className={cn(
+                'rounded-3xl border overflow-hidden',
+                isDarkUi
+                  ? 'border-blue-500/20 bg-[#151d32]'
+                  : 'bg-white border-slate-200',
+              )}
+            >
+              <div className="px-4 py-3 border-b border-white/5">
+                <h3 className="text-lg font-black uppercase tracking-tight text-slate-100">
+                  {defaultProject || 'Obra / projeto'}
+                </h3>
+                <p className="text-[10px] font-bold uppercase text-slate-500 mt-1">
+                  Localização: Espanha (referência)
+                </p>
+              </div>
+              <div className="h-40 bg-slate-800/80 flex items-center justify-center text-slate-500 text-xs">
+                <MapPin className="mr-2" size={18} />
+                Mapa — vista em breve
+              </div>
+            </div>
+            <BudgetBar pct={budgetPct} />
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { t: 'Oficial', n: name || '—', on: true },
+                { t: 'Ajudante', n: 'Equipa', on: false },
+              ].map((x) => (
+                <div
+                  key={x.t}
+                  className="rounded-2xl border border-blue-500/20 bg-[#151d32] p-4"
+                >
+                  <p className="text-[10px] font-black uppercase text-slate-500">
+                    {x.t}
+                  </p>
+                  <p className="font-bold text-slate-200 truncate">{x.n}</p>
+                  <span
+                    className={cn(
+                      'inline-flex mt-2 items-center gap-1 text-[10px] font-bold',
+                      x.on ? 'text-emerald-400' : 'text-slate-500',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'h-2 w-2 rounded-full',
+                        x.on ? 'bg-emerald-400' : 'bg-slate-600',
+                      )}
+                    />
+                    {x.on ? 'Online' : '—'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'report' && (
+          <div
+            className={cn(
+              'rounded-3xl border p-6 mb-8 space-y-6',
+              isDarkUi
+                ? 'border-blue-500/20 bg-[#151d32]'
+                : 'bg-white border-slate-200 shadow-sm',
+            )}
+          >
+            <div>
+              <label
+                className={cn(
+                  'text-[10px] font-black uppercase block mb-2',
+                  isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                )}
+              >
+                Nome do colaborador
+              </label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className={cn(
+                  'w-full rounded-xl border px-4 py-3',
+                  isDarkUi
+                    ? 'border-white/10 bg-black/30 text-slate-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-900',
+                )}
+              />
+            </div>
+            <div>
+              <label
+                className={cn(
+                  'text-[10px] font-black uppercase block mb-2',
+                  isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                )}
+              >
+                Registos do período
+              </label>
+              <p
+                className={cn(
+                  'text-lg font-black',
+                  isDarkUi ? 'text-slate-200' : 'text-slate-900',
+                )}
+              >
+                {format(currentDate, 'MMMM yyyy', { locale: ptBR })}
+              </p>
+            </div>
+            <div>
+              <label
+                className={cn(
+                  'text-[10px] font-black uppercase block mb-2',
+                  isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                )}
+              >
+                Assinatura digital
+              </label>
+              {signature ? (
+                <img
+                  src={signature}
+                  alt=""
+                  className={cn(
+                    'h-20 object-contain rounded-lg p-2',
+                    isDarkUi ? 'bg-white/5' : 'bg-slate-100',
+                  )}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsSignatureOpen(true)}
+                  className={cn(
+                    'w-full rounded-xl border-2 border-dashed py-8 text-sm',
+                    isDarkUi
+                      ? 'border-white/20 text-slate-500'
+                      : 'border-slate-300 text-slate-500',
+                  )}
+                >
+                  Toque para assinar
+                </button>
+              )}
+            </div>
+            <div className="opacity-90 scale-90 origin-top">
+              <MonthHeatmap
+                year={currentDate.getFullYear()}
+                month={currentDate.getMonth() + 1}
+                intensityByDay={heatIntensity}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={exportPDF}
+              disabled={isExporting}
+              className="w-full rounded-2xl bg-blue-600 py-4 text-sm font-black uppercase tracking-widest text-white shadow-xl shadow-blue-600/30 disabled:opacity-50"
+            >
+              {isExporting ? 'A gerar…' : 'Gerar relatório PDF'}
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'manage' && (
+          <div
+            className={cn(
+              'rounded-3xl border p-4 mb-8 overflow-x-auto',
+              isDarkUi
+                ? 'border-blue-500/20 bg-[#151d32]'
+                : 'bg-white border-slate-200',
+            )}
+          >
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-white/10 text-[10px] font-black uppercase text-slate-500">
+                  <th className="py-2 pr-2">Data</th>
+                  <th className="py-2 pr-2">Projeto</th>
+                  <th className="py-2 pr-2">Estado</th>
+                  <th className="py-2">Opções</th>
+                </tr>
+              </thead>
+              <tbody>
+                {days.map((d) => {
+                  const dn = d.getDate();
+                  const e = entries[dn];
+                  return (
+                    <tr
+                      key={dn}
+                      className="border-b border-white/5 text-slate-300"
+                    >
+                      <td className="py-2 font-mono">
+                        {format(d, 'dd/MM', { locale: ptBR })}
+                      </td>
+                      <td className="py-2 max-w-[120px] truncate">
+                        {e?.project || '—'}
+                      </td>
+                      <td className="py-2">
+                        {e?.marked ? (
+                          <CheckCircle2 className="inline text-emerald-400" size={16} />
+                        ) : (
+                          <Timer className="inline text-blue-400" size={16} />
+                        )}
+                      </td>
+                      <td className="py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleResetDay(dn)}
+                          className="text-blue-400"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'dashboard' && (
+          <>
+            <GsiDashboardHero
+              name={name}
+              setName={setName}
+              role={role || 'Oficial'}
+              setRole={(r) => setRole(r)}
+              profilePhoto={profilePhoto}
+              onPickPhoto={() => photoInputRef.current?.click()}
+              isDark={isDarkUi}
+            />
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+              <div
+                className={cn(
+                  'rounded-3xl border p-4 lg:col-span-1',
+                  isDarkUi
+                    ? 'border-blue-500/20 bg-[#151d32]'
+                    : 'bg-white border-slate-200 shadow-sm',
+                )}
+              >
+                <p
+                  className={cn(
+                    'text-[10px] font-black uppercase tracking-widest mb-2',
+                    isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                  )}
+                >
+                  Total de horas (mês)
+                </p>
+                <HoursDonut totalHours={totalHours} />
+              </div>
+              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <MiniBarValue
+                  label="Valor estimado"
+                  value={`€${totalEarnings.toFixed(2)}`}
+                  isDark={isDarkUi}
+                />
+                <MiniBarValue
+                  label="Dias registados"
+                  value={`${Object.keys(entries).length}`}
+                  isDark={isDarkUi}
+                />
+              </div>
+            </div>
+
+            <div
+              className={cn(
+                'rounded-3xl border p-4 mb-6',
+                isDarkUi
+                  ? 'border-blue-500/20 bg-[#151d32]'
+                  : 'bg-white border-slate-200',
+              )}
+            >
+              <MonthHeatmap
+                year={currentDate.getFullYear()}
+                month={currentDate.getMonth() + 1}
+                intensityByDay={heatIntensity}
+              />
+              <p className="mt-4 text-center text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                Próximos passos: finalize as marcações pendentes
+              </p>
+            </div>
+
         <section className={cn(
           "rounded-2xl p-6 shadow-xl border mb-8 transition-colors duration-300",
           theme === 'dark' ? "bg-[#111111] border-white/5" : "bg-white border-slate-200"
         )}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className={cn(
-                "text-xs font-black flex items-center gap-2 uppercase tracking-widest",
-                theme === 'dark' ? "text-white/40" : "text-slate-400"
-              )}>
-                <User size={12} /> NOME DO COLABORADOR
-              </label>
-              <input 
-                type="text" 
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Digite seu nome completo"
-                className={cn(
-                  "w-full px-4 py-3 border rounded-xl focus:ring-2 outline-none transition-all placeholder:text-white/20",
-                  theme === 'dark' ? "bg-black border-white/10 text-white focus:ring-[#D4AF37]" : "bg-slate-50 border-slate-200 text-slate-900 focus:ring-[#2563EB]"
-                )}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className={cn(
-                "text-xs font-black flex items-center gap-2 uppercase tracking-widest",
-                theme === 'dark' ? "text-white/40" : "text-slate-400"
-              )}>
-                <Briefcase size={12} /> CARGO
-              </label>
-              <div className="flex gap-4">
-                {['Oficial', 'Ajudante'].map((option) => (
-                  <button
-                    key={option}
-                    onClick={() => setRole(option as any)}
-                    className={cn(
-                      "flex-1 py-3 rounded-xl border font-bold transition-all active:scale-95 uppercase tracking-widest text-xs",
-                      role === option 
-                        ? theme === 'dark' ? "bg-[#D4AF37] border-[#D4AF37] text-white shadow-[#D4AF37]/30" : "bg-[#2563EB] border-[#2563EB] text-white shadow-[#2563EB]/30"
-                        : theme === 'dark' 
-                          ? "bg-black border-white/10 text-white/40 hover:border-white/20"
-                          : "bg-slate-50 border-slate-200 text-slate-400 hover:border-slate-300"
-                    )}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            </div>
             <div className="space-y-2 md:col-span-2">
               <label className={cn(
                 "text-xs font-black flex items-center gap-2 uppercase tracking-widest",
@@ -743,78 +1097,6 @@ export default function App() {
                   </button>
                 )}
               </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Resumo do mês — separado das marcações */}
-        <section
-          className={cn(
-            'rounded-2xl p-5 sm:p-6 shadow-lg border mb-8 grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6',
-            theme === 'dark'
-              ? 'bg-[#141414] border-white/10'
-              : 'bg-white border-slate-200',
-          )}
-        >
-          <div className="flex items-start gap-4">
-            <div
-              className={cn(
-                'w-12 h-12 rounded-xl flex items-center justify-center shrink-0',
-                theme === 'dark'
-                  ? 'bg-[#D4AF37]/15 text-[#D4AF37]'
-                  : 'bg-[#2563EB]/10 text-[#2563EB]',
-              )}
-            >
-              <Clock size={22} />
-            </div>
-            <div>
-              <p
-                className={cn(
-                  'text-[10px] font-black uppercase tracking-[0.2em] mb-1',
-                  theme === 'dark' ? 'text-white/45' : 'text-slate-500',
-                )}
-              >
-                Total de horas (mês)
-              </p>
-              <p
-                className={cn(
-                  'text-3xl font-black tabular-nums',
-                  theme === 'dark' ? 'text-white' : 'text-slate-900',
-                )}
-              >
-                {totalHours}
-                <span
-                  className={cn(
-                    'text-sm font-semibold ml-1.5',
-                    theme === 'dark' ? 'text-white/50' : 'text-slate-500',
-                  )}
-                >
-                  h
-                </span>
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-4 sm:text-right sm:flex-row-reverse sm:justify-start">
-            <div
-              className={cn(
-                'w-12 h-12 rounded-xl flex items-center justify-center shrink-0',
-                theme === 'dark' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-50 text-emerald-600',
-              )}
-            >
-              <DollarSign size={22} />
-            </div>
-            <div className="min-w-0 flex-1 sm:text-right">
-              <p
-                className={cn(
-                  'text-[10px] font-black uppercase tracking-[0.2em] mb-1',
-                  theme === 'dark' ? 'text-white/45' : 'text-slate-500',
-                )}
-              >
-                Valor estimado
-              </p>
-              <p className="text-3xl font-black text-emerald-500 tabular-nums">
-                €{totalEarnings.toFixed(2)}
-              </p>
             </div>
           </div>
         </section>
@@ -1030,6 +1312,8 @@ export default function App() {
             </AnimatePresence>
           </div>
         </div>
+          </>
+        )}
       </main>
 
       {/* Settings & History Sheet */}

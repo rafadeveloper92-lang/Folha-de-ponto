@@ -23,3 +23,5 @@ Para gerar o APK Android após alterar o front-end: `npm run android:build` (req
 Ícones da PWA estão em `public/icon-192.png` e `public/icon-512.png` (gerados por `python3 scripts/generate-icons.py` se precisar de os recriar).
 
 O **PDF do ponto** é gerado **no telemóvel** com `jsPDF` (texto e tabela), sem servidor e **sem API Gemini**. No Android, a partilha usa os plugins `@capacitor/filesystem` e `@capacitor/share` para enviar o ficheiro real às apps (WhatsApp, etc.).
+
+Interface com **abas** (Painel, Análises, Projeto, Relatório, Gestão), gráficos (**Recharts**: donut, radar, barras, heatmap), foto de perfil opcional (guardada em base64 no perfil) e tema escuro tipo dashboard GSI (alternar sol/lua para claro).
