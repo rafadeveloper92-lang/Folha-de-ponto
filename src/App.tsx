@@ -19,7 +19,6 @@ import {
   PenTool,
   Upload,
   Database,
-  MessageCircle,
   Share2,
   Sun,
   Moon
@@ -29,8 +28,6 @@ import { ptBR } from 'date-fns/locale';
 import { WorkMonth, WorkDay } from './types';
 import { cn } from './lib/utils';
 import { PDFTemplate } from './components/PDFTemplate';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 import SignatureCanvas from 'react-signature-canvas';
 import type { UserProfile, WorkEntry } from './lib/db';
 import {
@@ -45,6 +42,7 @@ import {
   saveProfile,
 } from './lib/storage';
 import { playShortBeep } from './lib/beep';
+import { downloadPdfBlob, renderElementToPdfBlob, shareOrDownloadPdf } from './lib/pdfHelpers';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -60,7 +58,7 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [history, setHistory] = useState<{ month: string, hours: number, days: number }[]>([]);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>('light');
   const [defaultProject, setDefaultProject] = useState('');
   
   const pdfRef = useRef<HTMLDivElement>(null);
@@ -91,7 +89,7 @@ export default function App() {
         setRole(profile.role as any);
         setHourlyRate(profile.hourlyRate);
         setSignature(profile.signature || null);
-        if (profile.theme) setTheme(profile.theme);
+        setTheme(profile.theme ?? 'light');
         if (profile.defaultProject) setDefaultProject(profile.defaultProject);
       }
 
@@ -217,7 +215,7 @@ export default function App() {
       }
     }));
     
-    playShortBeep();
+    void playShortBeep();
     setSavingDay(day);
     setTimeout(() => setSavingDay(null), 1000);
   };
@@ -235,7 +233,7 @@ export default function App() {
       }
     }));
     
-    playShortBeep();
+    void playShortBeep();
     setSavingDay(day);
     setTimeout(() => setSavingDay(null), 1000);
   };
@@ -290,51 +288,24 @@ export default function App() {
       return newEntries;
     });
     
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
-    audio.play().catch(e => console.log('Audio play failed', e));
+    void playShortBeep();
   };
+
+  const pdfFileBase = () =>
+    `GSI_Ponto_${(name || 'Funcionario').replace(/\s+/g, '_')}_${format(currentDate, 'MM_yyyy')}.pdf`;
 
   const shareToWhatsApp = async () => {
     if (!pdfRef.current) return;
     setIsExporting(true);
-    
-    try {
-      window.scrollTo(0, 0);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const canvas = await html2canvas(pdfRef.current, {
-        scale: 2,
-        useCORS: true,
-      });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      
-      const pdfBlob = pdf.output('blob');
-      const fileName = `GSI_Ponto_${name || 'Funcionario'}_${format(currentDate, 'MM_yyyy')}.pdf`;
-      const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
 
-      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: 'Meu Ponto GSI',
-          text: `Aqui está o meu ponto da GSI referente a ${format(currentDate, 'MMMM yyyy', { locale: ptBR })}.`,
-        });
-      } else {
-        // Fallback: Just open WhatsApp with a message
-        const message = encodeURIComponent(`Olá, estou enviando meu ponto da GSI referente a ${format(currentDate, 'MMMM yyyy', { locale: ptBR })}. Acabei de baixar o PDF.`);
-        window.open(`https://wa.me/?text=${message}`, '_blank');
-        // Also trigger download as fallback
-        pdf.save(fileName);
-      }
+    try {
+      const blob = await renderElementToPdfBlob(pdfRef.current);
+      const fileName = pdfFileBase();
+      const shareText = `Ponto GSI — ${format(currentDate, 'MMMM yyyy', { locale: ptBR })}`;
+      await shareOrDownloadPdf(blob, fileName, 'Ponto GSI', shareText);
     } catch (error) {
       console.error('Error sharing PDF:', error);
-      alert('Houve um erro ao compartilhar. O PDF será baixado em vez disso.');
-      exportPDF();
+      alert('Não foi possível gerar o PDF. Verifique se há dados e tente de novo.');
     } finally {
       setIsExporting(false);
     }
@@ -343,27 +314,10 @@ export default function App() {
   const exportPDF = async () => {
     if (!pdfRef.current) return;
     setIsExporting(true);
-    
+
     try {
-      window.scrollTo(0, 0);
-      // Small delay to ensure template is rendered and scroll finished
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const canvas = await html2canvas(pdfRef.current, {
-        scale: 2,
-        useCORS: true,
-        logging: true,
-        allowTaint: true,
-      });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`GSI_Ponto_${name || 'Funcionario'}_${format(currentDate, 'MM_yyyy')}.pdf`);
-      console.log('PDF generated successfully');
+      const blob = await renderElementToPdfBlob(pdfRef.current);
+      downloadPdfBlob(blob, pdfFileBase());
     } catch (error) {
       console.error('Error generating PDF:', error);
       alert('Houve um erro ao gerar o PDF. Por favor, tente novamente.');
@@ -518,8 +472,8 @@ export default function App() {
 
   return (
     <div className={cn(
-      "min-h-screen transition-colors duration-300 pb-20",
-      theme === 'dark' ? "bg-black text-white" : "bg-white text-slate-900"
+      "min-h-screen transition-colors duration-300 pb-10",
+      theme === 'dark' ? "bg-black text-white" : "bg-slate-50 text-slate-900"
     )}>
       {/* PWA Install Banner */}
       <AnimatePresence>
@@ -598,31 +552,32 @@ export default function App() {
             <button 
               onClick={shareToWhatsApp}
               disabled={isExporting}
-              className="flex items-center gap-2 bg-[#25D366] hover:bg-[#128C7E] text-white px-4 py-2 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50 shadow-[0_0_15px_rgba(37,211,102,0.3)]"
-              title="Compartilhar no WhatsApp"
+              className="flex items-center gap-1.5 sm:gap-2 bg-[#25D366] hover:bg-[#128C7E] text-white px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-bold transition-all active:scale-95 disabled:opacity-50"
+              title="Compartilhar PDF (WhatsApp ou outras apps)"
             >
               {isExporting ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <MessageCircle size={18} />
+                <Share2 size={18} />
               )}
-              <span className="hidden md:inline">WHATSAPP</span>
+              <span className="hidden sm:inline">Partilhar</span>
             </button>
 
             <button 
               onClick={exportPDF}
               disabled={isExporting}
               className={cn(
-                "flex items-center gap-2 text-white px-6 py-2 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50 shadow-lg",
+                "flex items-center gap-1.5 sm:gap-2 text-white px-3 sm:px-5 py-2 rounded-full text-xs sm:text-sm font-bold transition-all active:scale-95 disabled:opacity-50 shadow-lg",
                 theme === 'dark' ? "bg-[#D4AF37] hover:bg-[#b8962f] shadow-[#D4AF37]/30" : "bg-[#2563EB] hover:bg-[#1d4ed8] shadow-[#2563EB]/30"
               )}
+              title="Descarregar PDF"
             >
               {isExporting ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <Download size={18} />
               )}
-              <span className="hidden sm:inline">GERAR PDF</span>
+              <span className="hidden sm:inline">PDF</span>
             </button>
 
             <button 
@@ -795,42 +750,76 @@ export default function App() {
               </div>
             </div>
           </div>
+        </section>
 
-          {/* Stats Summary */}
-          <div className={cn(
-            "mt-6 pt-6 border-t flex items-center justify-between",
-            theme === 'dark' ? "border-white/5" : "border-slate-100"
-          )}>
-            <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-12 h-12 rounded-2xl flex items-center justify-center",
-                theme === 'dark' ? "bg-[#D4AF37]/10 text-[#D4AF37]" : "bg-[#2563EB]/10 text-[#2563EB]"
-              )}>
-                <Clock size={24} />
-              </div>
-              <div>
-                <p className={cn(
-                  "text-[10px] font-black uppercase tracking-[0.2em]",
-                  theme === 'dark' ? "text-white/40" : "text-slate-400"
-                )}>TOTAL DO MÊS</p>
-                <p className={cn(
-                  "text-2xl font-black",
-                  theme === 'dark' ? "text-white" : "text-slate-900"
-                )}>{totalHours} <span className={cn(
-                  "text-xs font-normal",
-                  theme === 'dark' ? "text-white/40" : "text-slate-400"
-                )}>horas</span></p>
-              </div>
+        {/* Resumo do mês — separado das marcações */}
+        <section
+          className={cn(
+            'rounded-2xl p-5 sm:p-6 shadow-lg border mb-8 grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6',
+            theme === 'dark'
+              ? 'bg-[#141414] border-white/10'
+              : 'bg-white border-slate-200',
+          )}
+        >
+          <div className="flex items-start gap-4">
+            <div
+              className={cn(
+                'w-12 h-12 rounded-xl flex items-center justify-center shrink-0',
+                theme === 'dark'
+                  ? 'bg-[#D4AF37]/15 text-[#D4AF37]'
+                  : 'bg-[#2563EB]/10 text-[#2563EB]',
+              )}
+            >
+              <Clock size={22} />
             </div>
-            <div className="text-right">
-              <p className={cn(
-                "text-[10px] font-black uppercase tracking-[0.2em]",
-                theme === 'dark' ? "text-white/40" : "text-slate-400"
-              )}>VALOR A RECEBER</p>
-              <div className="flex items-center justify-end gap-1">
-                <DollarSign size={20} className="text-emerald-500" />
-                <p className="text-2xl font-black text-emerald-500">€ {totalEarnings.toFixed(2)}</p>
-              </div>
+            <div>
+              <p
+                className={cn(
+                  'text-[10px] font-black uppercase tracking-[0.2em] mb-1',
+                  theme === 'dark' ? 'text-white/45' : 'text-slate-500',
+                )}
+              >
+                Total de horas (mês)
+              </p>
+              <p
+                className={cn(
+                  'text-3xl font-black tabular-nums',
+                  theme === 'dark' ? 'text-white' : 'text-slate-900',
+                )}
+              >
+                {totalHours}
+                <span
+                  className={cn(
+                    'text-sm font-semibold ml-1.5',
+                    theme === 'dark' ? 'text-white/50' : 'text-slate-500',
+                  )}
+                >
+                  h
+                </span>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-start gap-4 sm:text-right sm:flex-row-reverse sm:justify-start">
+            <div
+              className={cn(
+                'w-12 h-12 rounded-xl flex items-center justify-center shrink-0',
+                theme === 'dark' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-50 text-emerald-600',
+              )}
+            >
+              <DollarSign size={22} />
+            </div>
+            <div className="min-w-0 flex-1 sm:text-right">
+              <p
+                className={cn(
+                  'text-[10px] font-black uppercase tracking-[0.2em] mb-1',
+                  theme === 'dark' ? 'text-white/45' : 'text-slate-500',
+                )}
+              >
+                Valor estimado
+              </p>
+              <p className="text-3xl font-black text-emerald-500 tabular-nums">
+                €{totalEarnings.toFixed(2)}
+              </p>
             </div>
           </div>
         </section>
@@ -1357,39 +1346,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Hidden PDF Template */}
       <PDFTemplate data={workMonthData} innerRef={pdfRef} />
-
-      {/* Floating Action Buttons for Mobile */}
-      <div className="fixed bottom-6 right-6 sm:hidden z-40 flex flex-col gap-4">
-        <button 
-          onClick={shareToWhatsApp}
-          disabled={isExporting}
-          className="w-14 h-14 bg-[#25D366] text-white rounded-full shadow-[0_0_20px_rgba(37,211,102,0.5)] flex items-center justify-center active:scale-90 transition-all disabled:opacity-50"
-          title="Compartilhar no WhatsApp"
-        >
-          {isExporting ? (
-            <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          ) : (
-            <MessageCircle size={24} />
-          )}
-        </button>
-        <button 
-          onClick={exportPDF}
-          disabled={isExporting}
-          className={cn(
-            "w-14 h-14 text-white rounded-full flex items-center justify-center active:scale-90 transition-all disabled:opacity-50",
-            theme === 'dark' ? "bg-[#D4AF37] shadow-[#D4AF37]/50" : "bg-[#2563EB] shadow-[#2563EB]/50"
-          )}
-          title="Gerar PDF"
-        >
-          {isExporting ? (
-            <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          ) : (
-            <Download size={24} />
-          )}
-        </button>
-      </div>
       <datalist id="project-options">
         <option value="San Carlos Can Brisa" />
       </datalist>

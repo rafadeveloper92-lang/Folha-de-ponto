@@ -1,6 +1,5 @@
 import React from 'react';
 import { WorkMonth } from '../types';
-import { DollarSign } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface PDFTemplateProps {
@@ -12,21 +11,30 @@ export const PDFTemplate: React.FC<PDFTemplateProps> = ({ data, innerRef }) => {
   const daysInMonth = 31; // Template always shows 31 rows
 
   return (
-    <div style={{ position: 'fixed', left: '-2000mm', top: 0, zIndex: -100 }}>
+    <div
+      className="pdf-offscreen-root"
+      style={{
+        position: 'fixed',
+        left: '-12000px',
+        top: 0,
+        width: '210mm',
+        zIndex: -50,
+        pointerEvents: 'none',
+      }}
+    >
       <div 
         ref={innerRef} 
         className="pdf-container flex flex-col font-serif"
         style={{ color: '#000', backgroundColor: '#fff', position: 'relative' }}
       >
-        {/* Full Page Background Image */}
-        <div className="absolute inset-0 z-0 opacity-15 pointer-events-none overflow-hidden">
-          <img 
-            src="https://images.unsplash.com/photo-1516339901601-2e1b62dc0c45?auto=format&fit=crop&w=1200&q=80" 
-            className="w-full h-full object-cover"
-            alt="background"
-            referrerPolicy="no-referrer"
-          />
-        </div>
+        {/* Fundo local/offline — sem imagem remota */}
+        <div
+          className="absolute inset-0 z-0 pointer-events-none"
+          style={{
+            background: 'linear-gradient(165deg, #f8fafc 0%, #e2e8f0 45%, #f1f5f9 100%)',
+            opacity: 0.95,
+          }}
+        />
         
         {/* CSS-based Watermark for better reliability */}
         <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none overflow-hidden">
@@ -94,9 +102,8 @@ export const PDFTemplate: React.FC<PDFTemplateProps> = ({ data, innerRef }) => {
                 <td className="text-center py-1" style={{ border: '1px solid #000' }}>TOTAL</td>
                 <td className="text-center py-1" style={{ border: '1px solid #000' }}>{data.totalHours}h</td>
                 <td colSpan={1} className="px-4 py-1" style={{ border: '1px solid #000' }}>
-                  <div className="flex items-center justify-end gap-1" style={{ color: '#059669' }}>
-                    <DollarSign size={16} />
-                    <span>VALOR A RECEBER: {data.totalEarnings.toFixed(2)}€</span>
+                  <div className="flex items-center justify-end" style={{ color: '#059669' }}>
+                    <span>VALOR A RECEBER: €{data.totalEarnings.toFixed(2)}</span>
                   </div>
                 </td>
               </tr>
