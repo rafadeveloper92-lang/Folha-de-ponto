@@ -18,7 +18,12 @@ CREATE TABLE IF NOT EXISTS profile (
   signature TEXT NOT NULL,
   theme TEXT,
   default_project TEXT,
-  profile_photo TEXT
+  profile_photo TEXT,
+  onboarding_complete INTEGER DEFAULT 0,
+  role_locked INTEGER DEFAULT 0,
+  employee_pdf_base64 TEXT,
+  employee_code TEXT,
+  qr_data_url TEXT
 );
 CREATE TABLE IF NOT EXISTS entries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,8 +62,9 @@ async function migrateFromDexieIfNeeded(): Promise<void> {
 
   if (profile) {
     await sqlConn.run(
-      `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo)
-       VALUES (?,?,?,?,?,?,?,?)`,
+      `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo,
+       onboarding_complete, role_locked, employee_pdf_base64, employee_code, qr_data_url)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         profile.id,
         profile.name,
@@ -68,6 +74,11 @@ async function migrateFromDexieIfNeeded(): Promise<void> {
         profile.theme ?? null,
         profile.defaultProject ?? null,
         profile.profilePhoto ?? null,
+        profile.onboardingComplete ? 1 : 0,
+        profile.roleLocked ? 1 : 0,
+        profile.employeePdfBase64 ?? null,
+        profile.employeeCode ?? null,
+        profile.qrDataUrl ?? null,
       ],
     );
   }
@@ -110,10 +121,20 @@ async function openSqlite(): Promise<void> {
   sqlConn = await sqlite.createConnection(DB_NAME, false, 'no-encryption', 1, false);
   await sqlConn.open();
   await sqlConn.execute(SCHEMA, false);
-  try {
-    await sqlConn.execute('ALTER TABLE profile ADD COLUMN profile_photo TEXT;', false);
-  } catch {
-    /* coluna já existe */
+  const alters = [
+    'ALTER TABLE profile ADD COLUMN profile_photo TEXT;',
+    'ALTER TABLE profile ADD COLUMN onboarding_complete INTEGER DEFAULT 0;',
+    'ALTER TABLE profile ADD COLUMN role_locked INTEGER DEFAULT 0;',
+    'ALTER TABLE profile ADD COLUMN employee_pdf_base64 TEXT;',
+    'ALTER TABLE profile ADD COLUMN employee_code TEXT;',
+    'ALTER TABLE profile ADD COLUMN qr_data_url TEXT;',
+  ];
+  for (const sql of alters) {
+    try {
+      await sqlConn.execute(sql, false);
+    } catch {
+      /* coluna já existe */
+    }
   }
   await migrateFromDexieIfNeeded();
   useNativeSqlite = true;
@@ -140,25 +161,42 @@ export async function loadProfile(): Promise<UserProfile | undefined> {
   if (useNativeSqlite && sqlConn) {
     const res = await sqlConn.query(
       `SELECT id, name, role, hourly_rate AS hourlyRate, signature, theme, default_project AS defaultProject,
-              profile_photo AS profilePhoto
+              profile_photo AS profilePhoto, onboarding_complete AS onboardingComplete, role_locked AS roleLocked,
+              employee_pdf_base64 AS employeePdfBase64, employee_code AS employeeCode, qr_data_url AS qrDataUrl
        FROM profile WHERE id = 'current'`,
       [],
     );
     const row = res.values?.[0] as Record<string, unknown> | undefined;
     if (!row) return undefined;
+    const hr = Number(row.hourlyRate ?? row.hourly_rate ?? 0);
+    const ocRaw = row.onboardingComplete ?? row.onboarding_complete;
+    const onboardingComplete =
+      ocRaw != null ? Number(ocRaw) === 1 : false;
     return {
       id: 'current',
       name: String(row.name ?? ''),
       role: String(row.role ?? ''),
-      hourlyRate: Number(
-        row.hourlyRate ?? row.hourly_rate ?? 0,
-      ),
+      hourlyRate: hr,
       signature: String(row.signature ?? ''),
       theme: (row.theme as 'dark' | 'light') || undefined,
       defaultProject: row.defaultProject != null ? String(row.defaultProject) : undefined,
       profilePhoto:
         row.profilePhoto != null && String(row.profilePhoto).length > 0
           ? String(row.profilePhoto)
+          : undefined,
+      onboardingComplete,
+      roleLocked: Number(row.roleLocked ?? row.role_locked) === 1,
+      employeePdfBase64:
+        row.employeePdfBase64 != null && String(row.employeePdfBase64).length > 0
+          ? String(row.employeePdfBase64)
+          : undefined,
+      employeeCode:
+        row.employeeCode != null && String(row.employeeCode).length > 0
+          ? String(row.employeeCode)
+          : undefined,
+      qrDataUrl:
+        row.qrDataUrl != null && String(row.qrDataUrl).length > 0
+          ? String(row.qrDataUrl)
           : undefined,
     };
   }
@@ -192,8 +230,9 @@ export async function loadAllEntries(): Promise<WorkEntry[]> {
 export async function saveProfile(p: UserProfile): Promise<void> {
   if (useNativeSqlite && sqlConn) {
     await sqlConn.run(
-      `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo)
-       VALUES (?,?,?,?,?,?,?,?)`,
+      `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo,
+       onboarding_complete, role_locked, employee_pdf_base64, employee_code, qr_data_url)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         p.id,
         p.name,
@@ -203,6 +242,11 @@ export async function saveProfile(p: UserProfile): Promise<void> {
         p.theme ?? null,
         p.defaultProject ?? null,
         p.profilePhoto ?? null,
+        p.onboardingComplete ? 1 : 0,
+        p.roleLocked ? 1 : 0,
+        p.employeePdfBase64 ?? null,
+        p.employeeCode ?? null,
+        p.qrDataUrl ?? null,
       ],
     );
     return;
@@ -264,8 +308,9 @@ export async function restoreData(profile: UserProfile | undefined, entries: Wor
     await sqlConn.execute('DELETE FROM profile;', true);
     if (profile) {
       await sqlConn.run(
-        `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo)
-         VALUES (?,?,?,?,?,?,?,?)`,
+        `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo,
+         onboarding_complete, role_locked, employee_pdf_base64, employee_code, qr_data_url)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           profile.id,
           profile.name,
@@ -275,6 +320,11 @@ export async function restoreData(profile: UserProfile | undefined, entries: Wor
           profile.theme ?? null,
           profile.defaultProject ?? null,
           profile.profilePhoto ?? null,
+          profile.onboardingComplete ? 1 : 0,
+          profile.roleLocked ? 1 : 0,
+          profile.employeePdfBase64 ?? null,
+          profile.employeeCode ?? null,
+          profile.qrDataUrl ?? null,
         ],
       );
     }
