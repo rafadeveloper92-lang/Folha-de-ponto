@@ -11,6 +11,9 @@ type Props = {
   onPickPhoto: () => void;
   isDark: boolean;
   roleLocked?: boolean;
+  /** Imagem do QR (recortada do PDF da ficha) */
+  qrDataUrl?: string | null;
+  onQrClick?: () => void;
 };
 
 export function GsiDashboardHero({
@@ -22,6 +25,8 @@ export function GsiDashboardHero({
   onPickPhoto,
   isDark,
   roleLocked,
+  qrDataUrl,
+  onQrClick,
 }: Props) {
   return (
     <div
@@ -60,6 +65,16 @@ export function GsiDashboardHero({
             <Camera className="text-white" size={28} />
           </span>
         </button>
+        {qrDataUrl && onQrClick && (
+          <button
+            type="button"
+            onClick={onQrClick}
+            className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-white/15 bg-white p-1 shadow-lg transition-transform active:scale-95"
+            title="Ampliar QR da ficha"
+          >
+            <img src={qrDataUrl} alt="QR da ficha GSI" className="h-full w-full object-contain" />
+          </button>
+        )}
       </div>
       <div className="flex-1 min-w-0 space-y-3">
         <input
@@ -72,25 +87,36 @@ export function GsiDashboardHero({
           )}
         />
         <div className="flex flex-wrap gap-2">
-          {(['Oficial', 'Ajudante'] as const).map((r) => (
-            <button
-              key={r}
-              type="button"
-              disabled={roleLocked}
-              onClick={() => !roleLocked && setRole(r)}
+          {roleLocked && (role === 'Oficial' || role === 'Ajudante') ? (
+            <span
               className={cn(
-                'px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all',
-                role === r
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                  : isDark
-                    ? 'bg-white/5 text-slate-500 hover:bg-white/10'
-                    : 'bg-slate-100 text-slate-500',
-                roleLocked && 'opacity-90 cursor-default',
+                'px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest',
+                'bg-blue-600 text-white shadow-lg shadow-blue-600/30',
               )}
             >
-              {r}
-            </button>
-          ))}
+              {role}
+            </span>
+          ) : (
+            (['Oficial', 'Ajudante'] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                disabled={roleLocked}
+                onClick={() => !roleLocked && setRole(r)}
+                className={cn(
+                  'px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all',
+                  role === r
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                    : isDark
+                      ? 'bg-white/5 text-slate-500 hover:bg-white/10'
+                      : 'bg-slate-100 text-slate-500',
+                  roleLocked && 'opacity-90 cursor-default',
+                )}
+              >
+                {r}
+              </button>
+            ))
+          )}
         </div>
       </div>
     </div>

@@ -4,7 +4,24 @@ import { Camera, FileUp, Loader2, User } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { fileToCompressedDataUrl } from '../lib/profilePhoto';
 import { extractEmployeeCodeFromPdf } from '../lib/extractEmployeeCodeFromPdf';
-import { payloadToQrDataUrl } from '../lib/qrDataUrl';
+import { extractQrFromPdf } from '../lib/extractQrFromPdf';
+
+/** Tenta obter código GF… a partir do texto do QR ou do URL. */
+function codeFromQrPayload(payload: string): string | null {
+  const trimmed = payload.trim();
+  const direct = trimmed.match(/\b(GF\d{4,})\b/i);
+  if (direct) return direct[1]!.toUpperCase();
+  const alt = trimmed.match(/\b([A-Z]{2}\d{6,})\b/);
+  if (alt) return alt[1]!.toUpperCase();
+  try {
+    const u = new URL(trimmed);
+    const last = u.pathname.split('/').filter(Boolean).pop() ?? '';
+    if (/^[A-Z0-9]{4,}$/i.test(last)) return last.toUpperCase();
+  } catch {
+    /* não é URL */
+  }
+  return null;
+}
 
 type Props = {
   onComplete: (data: {
@@ -53,15 +70,24 @@ export function OnboardingModal({ onComplete }: Props) {
     setBusy(true);
     setPdfError('');
     try {
-      const code = await extractEmployeeCodeFromPdf(pdfFile);
-      if (!code) {
+      const qrFromDoc = await extractQrFromPdf(pdfFile);
+      if (!qrFromDoc) {
         setPdfError(
-          'Não foi possível ler o código na ficha. Use o PDF oficial GSI.',
+          'Não foi possível ler o QR na ficha. Use o PDF original GSI com o QR visível.',
         );
         setBusy(false);
         return;
       }
-      const qrDataUrl = await payloadToQrDataUrl(code);
+      let code =
+        (await extractEmployeeCodeFromPdf(pdfFile)) ??
+        codeFromQrPayload(qrFromDoc.payload);
+      if (!code) {
+        setPdfError(
+          'Código do colaborador não encontrado. Confirme que o PDF é a ficha GSI completa.',
+        );
+        setBusy(false);
+        return;
+      }
       const pdfB64 = await fileToBase64(pdfFile);
       await onComplete({
         name: name.trim(),
@@ -70,7 +96,8 @@ export function OnboardingModal({ onComplete }: Props) {
         profilePhoto: photo,
         employeePdfBase64: pdfB64,
         employeeCode: code,
-        qrDataUrl,
+        /** Imagem do QR recortada do PDF — o mesmo que o encarregado escaneia no papel. */
+        qrDataUrl: qrFromDoc.qrImageDataUrl,
       });
     } catch (e) {
       console.error(e);

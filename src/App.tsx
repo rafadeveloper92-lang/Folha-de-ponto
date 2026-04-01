@@ -1037,6 +1037,10 @@ export default function App() {
               onPickPhoto={() => photoInputRef.current?.click()}
               isDark={isDarkUi}
               roleLocked={roleLocked}
+              qrDataUrl={qrDataUrl}
+              onQrClick={
+                qrDataUrl ? () => setQrLightboxOpen(true) : undefined
+              }
             />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
