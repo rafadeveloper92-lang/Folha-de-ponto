@@ -1,0 +1,5 @@
+{
+  "name": "GSI Time Tracker",
+  "description": "Sistema de marcação de ponto com geração de PDF personalizado para Proyectos GSI.",
+  "requestFramePermissions": []
+}
