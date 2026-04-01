@@ -27,7 +27,6 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parse } fr
 import { ptBR } from 'date-fns/locale';
 import { WorkMonth, WorkDay } from './types';
 import { cn } from './lib/utils';
-import { PDFTemplate } from './components/PDFTemplate';
 import SignatureCanvas from 'react-signature-canvas';
 import type { UserProfile, WorkEntry } from './lib/db';
 import {
@@ -42,7 +41,8 @@ import {
   saveProfile,
 } from './lib/storage';
 import { playShortBeep } from './lib/beep';
-import { downloadPdfBlob, renderElementToPdfBlob, shareOrDownloadPdf } from './lib/pdfHelpers';
+import { buildGsiPdfBlob } from './lib/buildGsiPdf';
+import { downloadPdfBlob, shareOrDownloadPdf } from './lib/pdfHelpers';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -61,7 +61,6 @@ export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>('light');
   const [defaultProject, setDefaultProject] = useState('');
   
-  const pdfRef = useRef<HTMLDivElement>(null);
   const sigPad = useRef<SignatureCanvas>(null);
   const isInitialMount = useRef(true);
   const isChangingMonth = useRef(false);
@@ -291,41 +290,6 @@ export default function App() {
     void playShortBeep();
   };
 
-  const pdfFileBase = () =>
-    `GSI_Ponto_${(name || 'Funcionario').replace(/\s+/g, '_')}_${format(currentDate, 'MM_yyyy')}.pdf`;
-
-  const shareToWhatsApp = async () => {
-    if (!pdfRef.current) return;
-    setIsExporting(true);
-
-    try {
-      const blob = await renderElementToPdfBlob(pdfRef.current);
-      const fileName = pdfFileBase();
-      const shareText = `Ponto GSI — ${format(currentDate, 'MMMM yyyy', { locale: ptBR })}`;
-      await shareOrDownloadPdf(blob, fileName, 'Ponto GSI', shareText);
-    } catch (error) {
-      console.error('Error sharing PDF:', error);
-      alert('Não foi possível gerar o PDF. Verifique se há dados e tente de novo.');
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const exportPDF = async () => {
-    if (!pdfRef.current) return;
-    setIsExporting(true);
-
-    try {
-      const blob = await renderElementToPdfBlob(pdfRef.current);
-      downloadPdfBlob(blob, pdfFileBase());
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-      alert('Houve um erro ao gerar o PDF. Por favor, tente novamente.');
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
   const handleClearSignature = () => {
     if (sigPad.current) {
       sigPad.current.clear();
@@ -451,6 +415,37 @@ export default function App() {
     signature: signature || undefined,
     totalHours,
     totalEarnings
+  };
+
+  const pdfFileBase = () =>
+    `GSI_Ponto_${(name || 'Funcionario').replace(/\s+/g, '_')}_${format(currentDate, 'MM_yyyy')}.pdf`;
+
+  const shareToWhatsApp = async () => {
+    setIsExporting(true);
+    try {
+      const blob = buildGsiPdfBlob(workMonthData);
+      const fileName = pdfFileBase();
+      const shareText = `Ponto GSI — ${format(currentDate, 'MMMM yyyy', { locale: ptBR })}`;
+      await shareOrDownloadPdf(blob, fileName, 'Ponto GSI', shareText);
+    } catch (error) {
+      console.error('Error sharing PDF:', error);
+      alert('Não foi possível gerar o PDF. Tente novamente.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const exportPDF = async () => {
+    setIsExporting(true);
+    try {
+      const blob = buildGsiPdfBlob(workMonthData);
+      await downloadPdfBlob(blob, pdfFileBase());
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Houve um erro ao gerar o PDF. Tente novamente.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const copyPrevious = (dayNum: number) => {
@@ -1346,7 +1341,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <PDFTemplate data={workMonthData} innerRef={pdfRef} />
       <datalist id="project-options">
         <option value="San Carlos Can Brisa" />
       </datalist>

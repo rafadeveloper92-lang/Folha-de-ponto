@@ -21,3 +21,5 @@ Para gerar o APK Android após alterar o front-end: `npm run android:build` (req
 - **No navegador (PWA / `npm run dev`)**: continua a usar **IndexedDB** via Dexie — mesmo padrão de “só no teu dispositivo”, sem servidor.
 
 Ícones da PWA estão em `public/icon-192.png` e `public/icon-512.png` (gerados por `python3 scripts/generate-icons.py` se precisar de os recriar).
+
+O **PDF do ponto** é gerado **no telemóvel** com `jsPDF` (texto e tabela), sem servidor e **sem API Gemini**. No Android, a partilha usa os plugins `@capacitor/filesystem` e `@capacitor/share` para enviar o ficheiro real às apps (WhatsApp, etc.).

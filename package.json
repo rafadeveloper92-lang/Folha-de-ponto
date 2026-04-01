@@ -14,8 +14,10 @@
     "android:build": "npm run build && cap sync android"
   },
   "dependencies": {
-    "@capacitor/core": "^8.3.0",
     "@capacitor-community/sqlite": "^8.1.0",
+    "@capacitor/core": "^8.3.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/share": "^8.0.1",
     "@tailwindcss/vite": "^4.1.14",
     "@types/react-signature-canvas": "^1.0.7",
     "@vitejs/plugin-react": "^5.0.4",
@@ -24,7 +26,6 @@
     "dexie": "^4.0.11",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",

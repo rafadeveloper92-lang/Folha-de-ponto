@@ -1,32 +1,21 @@
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+import { Capacitor } from '@capacitor/core';
+import { Directory, Filesystem } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
-export async function renderElementToPdfBlob(el: HTMLElement): Promise<Blob> {
-  window.scrollTo(0, 0);
-  await new Promise((r) => setTimeout(r, 150));
-
-  const canvas = await html2canvas(el, {
-    scale: 2,
-    useCORS: true,
-    allowTaint: true,
-    logging: false,
-    backgroundColor: '#ffffff',
-    width: el.offsetWidth || el.scrollWidth,
-    height: el.offsetHeight || el.scrollHeight,
-    windowWidth: el.scrollWidth,
-    windowHeight: el.scrollHeight,
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onloadend = () => {
+      const s = r.result as string;
+      resolve(s.split(',')[1] ?? s);
+    };
+    r.onerror = reject;
+    r.readAsDataURL(blob);
   });
-
-  const imgData = canvas.toDataURL('image/png', 1.0);
-  const pdf = new jsPDF('p', 'mm', 'a4');
-  const pdfWidth = pdf.internal.pageSize.getWidth();
-  const pdfHeight = pdf.internal.pageSize.getHeight();
-  pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-
-  return pdf.output('blob');
 }
 
-export function downloadPdfBlob(blob: Blob, fileName: string): void {
+/** Browser: descarga via âncora (no Android WebView pode ser bloqueado). */
+export function downloadPdfBlobWeb(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -34,7 +23,46 @@ export function downloadPdfBlob(blob: Blob, fileName: string): void {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/** Android/iOS: grava em cache e abre o diálogo nativo (WhatsApp, Ficheiros, Drive…). */
+async function nativeSharePdfFile(
+  blob: Blob,
+  fileName: string,
+  shareText: string,
+): Promise<void> {
+  const base64 = await blobToBase64(blob);
+  const path = `gsi_exports/${fileName.replace(/[^\w.\-]/g, '_')}`;
+  const { uri } = await Filesystem.writeFile({
+    path,
+    data: base64,
+    directory: Directory.Cache,
+    recursive: true,
+  });
+
+  await Share.share({
+    title: 'Ponto GSI',
+    text: shareText,
+    files: [uri],
+    dialogTitle: 'Partilhar PDF',
+  });
+}
+
+export async function downloadPdfBlob(blob: Blob, fileName: string): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await nativeSharePdfFile(
+        blob,
+        fileName,
+        'Relatório de ponto — escolha onde guardar ou com que app abrir.',
+      );
+      return;
+    } catch (e) {
+      console.warn('native share (download) failed', e);
+    }
+  }
+  downloadPdfBlobWeb(blob, fileName);
 }
 
 export async function shareOrDownloadPdf(
@@ -43,6 +71,21 @@ export async function shareOrDownloadPdf(
   shareTitle: string,
   shareText: string,
 ): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await nativeSharePdfFile(blob, fileName, shareText);
+      return;
+    } catch (e) {
+      console.warn('native share failed', e);
+      try {
+        await downloadPdfBlob(blob, fileName);
+        return;
+      } catch (e2) {
+        console.warn('fallback failed', e2);
+      }
+    }
+  }
+
   const file = new File([blob], fileName, { type: 'application/pdf' });
 
   try {
@@ -58,8 +101,8 @@ export async function shareOrDownloadPdf(
       }
     }
   } catch (err) {
-    console.warn('share failed', err);
+    console.warn('web share failed', err);
   }
 
-  downloadPdfBlob(blob, fileName);
+  downloadPdfBlobWeb(blob, fileName);
 }
