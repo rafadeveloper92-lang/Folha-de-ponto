@@ -18,6 +18,8 @@ interface UserProfile {
   signature: string;
   theme?: 'dark' | 'light';
   defaultProject?: string;
+  /** Meta de horas no mês (ex.: 160) para o gráfico do painel */
+  monthlyHourGoal?: number;
 }
 
 const db = new Dexie('GSITrackerDB') as Dexie & {
@@ -27,7 +29,7 @@ const db = new Dexie('GSITrackerDB') as Dexie & {
 
 db.version(1).stores({
   entries: '++id, monthKey, day',
-  profile: 'id'
+  profile: 'id',
 });
 
 export type { WorkEntry, UserProfile };

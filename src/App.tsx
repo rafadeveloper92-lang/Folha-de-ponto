@@ -22,7 +22,11 @@ import {
   MessageCircle,
   Share2,
   Sun,
-  Moon
+  Moon,
+  LayoutDashboard,
+  LineChart,
+  MapPin,
+  FileText,
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -50,6 +54,8 @@ export default function App() {
   const [history, setHistory] = useState<{ month: string, hours: number, days: number }[]>([]);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [defaultProject, setDefaultProject] = useState('');
+  const [mainTab, setMainTab] = useState<'painel' | 'analises' | 'projeto' | 'relatorios'>('painel');
+  const [monthlyHourGoal, setMonthlyHourGoal] = useState(160);
   
   const pdfRef = useRef<HTMLDivElement>(null);
   const sigPad = useRef<SignatureCanvas>(null);
@@ -81,6 +87,9 @@ export default function App() {
         setSignature(profile.signature || null);
         if (profile.theme) setTheme(profile.theme);
         if (profile.defaultProject) setDefaultProject(profile.defaultProject);
+        if (profile.monthlyHourGoal != null && profile.monthlyHourGoal > 0) {
+          setMonthlyHourGoal(profile.monthlyHourGoal);
+        }
       }
 
       // Load Entries for current month
@@ -141,9 +150,10 @@ export default function App() {
       hourlyRate,
       signature: signature || '',
       theme,
-      defaultProject
+      defaultProject,
+      monthlyHourGoal,
     });
-  }, [name, role, hourlyRate, signature, theme, defaultProject]);
+  }, [name, role, hourlyRate, signature, theme, defaultProject, monthlyHourGoal]);
 
   // Save Entries to Dexie
   useEffect(() => {
@@ -494,6 +504,25 @@ export default function App() {
 
   const totalEarnings = totalHours * hourlyRate;
 
+  const hourGoal = monthlyHourGoal > 0 ? monthlyHourGoal : 160;
+  const progressToGoal = Math.min(totalHours / hourGoal, 1);
+  const profileInitials =
+    name
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0])
+      .join('')
+      .toUpperCase() || '?';
+  const profileQrPayload = JSON.stringify({
+    app: 'GSI Tracker',
+    nome: name || '—',
+    cargo: role || '—',
+    mes: format(currentDate, 'MM/yyyy'),
+  });
+  const profileQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(profileQrPayload)}`;
+
   const workMonthData: WorkMonth = {
     name,
     role,
@@ -522,10 +551,17 @@ export default function App() {
     }
   };
 
+  const isDark = theme === 'dark';
+  const pageBg = isDark ? 'bg-[#0d1117]' : 'bg-white';
+  const cardBg = isDark ? 'bg-[#161b22]' : 'bg-white';
+  const cardBorder = isDark ? 'border-white/[0.08]' : 'border-slate-200';
+  const accentBlue = '#2166ff';
+  const accentGreen = '#2ea043';
+
   return (
     <div className={cn(
-      "min-h-screen transition-colors duration-300 pb-20",
-      theme === 'dark' ? "bg-black text-white" : "bg-white text-slate-900"
+      'min-h-screen transition-colors duration-300 pb-24 sm:pb-20',
+      isDark ? `${pageBg} text-white` : 'bg-white text-slate-900',
     )}>
       {/* PWA Install Banner */}
       <AnimatePresence>
@@ -571,84 +607,435 @@ export default function App() {
       </AnimatePresence>
 
       {/* Header */}
-      <header className={cn(
-        "backdrop-blur-md border-b sticky top-0 z-30 shadow-lg",
-        theme === 'dark' ? "bg-black/80 border-white/10" : "bg-white/80 border-slate-200"
-      )}>
-        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+      <header
+        className={cn(
+          'backdrop-blur-md border-b sticky top-0 z-30 shadow-lg',
+          isDark ? 'bg-[#0d1117]/95 border-white/[0.06]' : 'bg-white/90 border-slate-200',
+        )}
+      >
+        <div className="max-w-5xl mx-auto px-4 h-14 sm:h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className={cn(
-              "w-10 h-10 rounded-lg flex items-center justify-center text-white font-black text-2xl shadow-lg",
-              theme === 'dark' ? "bg-[#D4AF37] shadow-[#D4AF37]/50" : "bg-[#2563EB] shadow-[#2563EB]/50"
-            )}>
+            <div
+              className={cn(
+                'w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center text-white font-black text-xl sm:text-2xl shadow-lg shrink-0',
+                isDark ? 'bg-[#D4AF37] shadow-[#D4AF37]/40' : 'bg-[#2563EB] shadow-[#2563EB]/50',
+              )}
+            >
               G
             </div>
-            <h1 className={cn(
-              "font-black text-xl tracking-tighter hidden sm:block",
-              theme === 'dark' ? "text-white" : "text-slate-900"
-            )}>GSI TRACKER</h1>
+            <h1
+              className={cn(
+                'font-black text-lg sm:text-xl tracking-tighter hidden sm:block',
+                isDark ? 'text-white' : 'text-slate-900',
+              )}
+            >
+              GSI TRACKER
+            </h1>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-4">
-            <button 
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          <div className="flex items-center gap-1.5 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => setTheme(isDark ? 'light' : 'dark')}
               className={cn(
-                "p-2 rounded-full transition-all active:scale-90",
-                theme === 'dark' ? "bg-white/10 text-yellow-400 hover:bg-white/20" : "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                'p-2 rounded-full transition-all active:scale-90',
+                isDark
+                  ? 'bg-white/10 text-amber-300 hover:bg-white/15'
+                  : 'bg-slate-200 text-slate-600 hover:bg-slate-300',
               )}
-              title={theme === 'dark' ? "Mudar para Modo Claro" : "Mudar para Modo Escuro"}
+              title={isDark ? 'Modo claro' : 'Modo escuro'}
             >
-              {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+              {isDark ? <Sun size={20} /> : <Moon size={20} />}
             </button>
 
-            <button 
+            <button
+              type="button"
               onClick={shareToWhatsApp}
               disabled={isExporting}
-              className="flex items-center gap-2 bg-[#25D366] hover:bg-[#128C7E] text-white px-4 py-2 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50 shadow-[0_0_15px_rgba(37,211,102,0.3)]"
-              title="Compartilhar no WhatsApp"
+              className={cn(
+                'flex items-center justify-center w-10 h-10 sm:w-auto sm:h-10 sm:px-4 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50',
+                'bg-[#25D366] hover:bg-[#128C7E] text-white shadow-[0_0_12px_rgba(37,211,102,0.35)]',
+              )}
+              title="WhatsApp"
             >
               {isExporting ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <MessageCircle size={18} />
+                <>
+                  <Share2 size={18} className="sm:hidden" />
+                  <span className="hidden sm:flex items-center gap-2">
+                    <MessageCircle size={18} />
+                    WHATSAPP
+                  </span>
+                </>
               )}
-              <span className="hidden md:inline">WHATSAPP</span>
             </button>
 
-            <button 
+            <button
+              type="button"
               onClick={exportPDF}
               disabled={isExporting}
               className={cn(
-                "flex items-center gap-2 text-white px-6 py-2 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50 shadow-lg",
-                theme === 'dark' ? "bg-[#D4AF37] hover:bg-[#b8962f] shadow-[#D4AF37]/30" : "bg-[#2563EB] hover:bg-[#1d4ed8] shadow-[#2563EB]/30"
+                'flex items-center justify-center w-10 h-10 sm:w-auto sm:h-10 sm:px-5 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50 text-white shadow-lg',
+                isDark
+                  ? 'bg-[#D4AF37] hover:bg-[#c9a432] shadow-[#D4AF37]/25'
+                  : 'bg-[#2563EB] hover:bg-[#1d4ed8] shadow-[#2563EB]/30',
               )}
+              title="PDF"
             >
               {isExporting ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <Download size={18} />
+                <>
+                  <Download size={18} className="sm:hidden" />
+                  <span className="hidden sm:flex items-center gap-2">
+                    <Download size={18} />
+                    PDF
+                  </span>
+                </>
               )}
-              <span className="hidden sm:inline">GERAR PDF</span>
             </button>
 
-            <button 
+            <button
+              type="button"
               onClick={() => setIsSettingsOpen(true)}
               className={cn(
-                "p-2 rounded-full transition-colors",
-                theme === 'dark' ? "hover:bg-white/10 text-white/70" : "hover:bg-slate-100 text-slate-400"
+                'p-2 rounded-full transition-colors',
+                isDark ? 'hover:bg-white/10 text-white/70' : 'hover:bg-slate-100 text-slate-400',
               )}
             >
-              <MoreVertical size={24} />
+              <MoreVertical size={22} />
             </button>
           </div>
         </div>
+
+        {/* Abas estilo app Android */}
+        <div
+          className={cn(
+            'max-w-5xl mx-auto px-3 sm:px-4 pb-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+            isDark ? 'border-b border-white/[0.06]' : 'border-b border-slate-100',
+          )}
+        >
+          <nav className="flex gap-2 min-w-max py-1" aria-label="Navegação principal">
+            {(
+              [
+                { id: 'painel' as const, label: 'PAINEL', Icon: LayoutDashboard },
+                { id: 'analises' as const, label: 'ANÁLISES', Icon: LineChart },
+                { id: 'projeto' as const, label: 'PROJETO', Icon: MapPin },
+                { id: 'relatorios' as const, label: 'RELATÓRIOS', Icon: FileText },
+              ] as const
+            ).map(({ id, label, Icon }) => {
+              const active = mainTab === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setMainTab(id)}
+                  className={cn(
+                    'flex items-center gap-2 px-4 py-2.5 rounded-full text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all shrink-0',
+                    active
+                      ? isDark
+                        ? 'text-white shadow-md'
+                        : 'text-white shadow-md'
+                      : isDark
+                        ? 'bg-[#161b22] text-slate-400 hover:text-slate-200 border border-white/[0.06]'
+                        : 'bg-slate-100 text-slate-500 hover:text-slate-700 border border-slate-200',
+                  )}
+                  style={
+                    active
+                      ? {
+                          backgroundColor: accentBlue,
+                          boxShadow: `0 4px 14px ${accentBlue}55`,
+                        }
+                      : undefined
+                  }
+                >
+                  <Icon size={16} strokeWidth={2.25} />
+                  {label}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        {/* User Info Card */}
+      <main className="max-w-5xl mx-auto px-4 py-5 sm:py-8">
+        {/* ——— PAINEL (dashboard estilo Android) ——— */}
+        {mainTab === 'painel' && (
+          <div className="space-y-4 mb-8">
+            <section
+              className={cn(
+                'rounded-2xl p-5 sm:p-6 border shadow-xl',
+                cardBg,
+                cardBorder,
+              )}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div
+                  className={cn(
+                    'w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-lg sm:text-xl font-black border-2 shrink-0',
+                    isDark
+                      ? 'bg-[#21262d] border-[#30363d] text-white'
+                      : 'bg-slate-100 border-slate-200 text-slate-800',
+                  )}
+                >
+                  {profileInitials}
+                </div>
+                <div className="shrink-0 rounded-xl overflow-hidden border border-white/10 bg-white p-1">
+                  <img
+                    src={profileQrUrl}
+                    alt="QR do perfil"
+                    width={72}
+                    height={72}
+                    className="w-[72px] h-[72px] sm:w-20 sm:h-20"
+                  />
+                </div>
+              </div>
+              <h2
+                className={cn(
+                  'mt-4 text-base sm:text-lg font-black uppercase tracking-tight leading-snug',
+                  isDark ? 'text-white' : 'text-slate-900',
+                )}
+              >
+                {name.trim() || 'NOME DO COLABORADOR'}
+              </h2>
+              <div className="mt-3 inline-flex">
+                <span
+                  className="px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest text-white"
+                  style={{ backgroundColor: accentBlue }}
+                >
+                  {role || 'CARGO'}
+                </span>
+              </div>
+            </section>
+
+            <section
+              className={cn(
+                'rounded-2xl p-5 sm:p-6 border shadow-xl',
+                cardBg,
+                cardBorder,
+              )}
+            >
+              <p
+                className={cn(
+                  'text-[10px] font-black uppercase tracking-[0.2em] mb-4',
+                  isDark ? 'text-slate-500' : 'text-slate-400',
+                )}
+              >
+                TOTAL DE HORAS (MÊS)
+              </p>
+              <div className="flex flex-col items-center">
+                <div className="relative w-44 h-44 sm:w-52 sm:h-52">
+                  <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+                    {(() => {
+                      const r = 38;
+                      const c = 2 * Math.PI * r;
+                      const g = progressToGoal * c;
+                      const b = Math.max(0, (1 - progressToGoal) * c);
+                      return (
+                        <>
+                          <circle
+                            cx="50"
+                            cy="50"
+                            r={r}
+                            fill="none"
+                            stroke={isDark ? '#21262d' : '#e2e8f0'}
+                            strokeWidth="10"
+                          />
+                          <circle
+                            cx="50"
+                            cy="50"
+                            r={r}
+                            fill="none"
+                            stroke={accentGreen}
+                            strokeWidth="10"
+                            strokeDasharray={`${g} ${c}`}
+                            strokeLinecap="round"
+                          />
+                          <circle
+                            cx="50"
+                            cy="50"
+                            r={r}
+                            fill="none"
+                            stroke={accentBlue}
+                            strokeWidth="10"
+                            strokeDasharray={`${b} ${c}`}
+                            strokeDashoffset={-g}
+                            strokeLinecap="round"
+                          />
+                        </>
+                      );
+                    })()}
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span
+                      className={cn(
+                        'text-2xl sm:text-3xl font-black tabular-nums',
+                        isDark ? 'text-white' : 'text-slate-900',
+                      )}
+                    >
+                      {totalHours}h
+                    </span>
+                  </div>
+                </div>
+                <p
+                  className={cn(
+                    'mt-2 text-xs font-bold uppercase tracking-widest',
+                    isDark ? 'text-slate-500' : 'text-slate-400',
+                  )}
+                >
+                  {totalHours}H / META {hourGoal}H
+                </p>
+              </div>
+            </section>
+
+            <section
+              className={cn(
+                'rounded-2xl p-5 sm:p-6 border shadow-xl',
+                cardBg,
+                cardBorder,
+              )}
+            >
+              <p
+                className={cn(
+                  'text-[10px] font-black uppercase tracking-[0.2em] mb-2',
+                  isDark ? 'text-slate-500' : 'text-slate-400',
+                )}
+              >
+                VALOR ESTIMADO
+              </p>
+              <p
+                className="text-3xl sm:text-4xl font-black tabular-nums"
+                style={{ color: accentGreen }}
+              >
+                €{totalEarnings.toFixed(2)}
+              </p>
+              <div className="mt-4 flex flex-col gap-2">
+                {[0.45, 0.72, 0.55, 0.9].map((w, i) => (
+                  <div
+                    key={i}
+                    className={cn('h-2 rounded-full overflow-hidden', isDark ? 'bg-[#21262d]' : 'bg-slate-100')}
+                  >
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${w * 100}%`,
+                        backgroundColor: accentBlue,
+                        opacity: 0.55 + i * 0.1,
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <p
+              className={cn(
+                'text-center text-[10px] uppercase tracking-widest font-bold px-2',
+                isDark ? 'text-slate-500' : 'text-slate-400',
+              )}
+            >
+              Ajuste valor/hora e meta em ⋮ → Configurações. Marcações em PROJETO.
+            </p>
+          </div>
+        )}
+
+        {/* ——— ANÁLISES ——— */}
+        {mainTab === 'analises' && (
+          <section
+            className={cn(
+              'rounded-2xl p-6 border shadow-xl mb-8',
+              cardBg,
+              cardBorder,
+            )}
+          >
+            <h2
+              className={cn(
+                'text-sm font-black uppercase tracking-widest mb-6',
+                isDark ? 'text-white' : 'text-slate-900',
+              )}
+            >
+              Resumo por mês
+            </h2>
+            {history.length === 0 ? (
+              <p className={cn('text-sm', isDark ? 'text-slate-500' : 'text-slate-400')}>
+                Ainda não há dados salvos. Registre dias na aba PROJETO.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {history.slice(0, 8).map((item) => {
+                  const maxH = Math.max(...history.map((h) => h.hours), 1);
+                  const barW = (item.hours / maxH) * 100;
+                  return (
+                    <div key={item.month}>
+                      <div className="flex justify-between text-[10px] font-black uppercase tracking-wider mb-1">
+                        <span className={isDark ? 'text-slate-400' : 'text-slate-500'}>{item.month}</span>
+                        <span style={{ color: accentGreen }}>{item.hours}h</span>
+                      </div>
+                      <div className={cn('h-2 rounded-full overflow-hidden', isDark ? 'bg-[#21262d]' : 'bg-slate-100')}>
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{ width: `${barW}%`, backgroundColor: accentBlue }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ——— RELATÓRIOS ——— */}
+        {mainTab === 'relatorios' && (
+          <section
+            className={cn(
+              'rounded-2xl p-6 border shadow-xl mb-8 space-y-4',
+              cardBg,
+              cardBorder,
+            )}
+          >
+            <h2
+              className={cn(
+                'text-sm font-black uppercase tracking-widest',
+                isDark ? 'text-white' : 'text-slate-900',
+              )}
+            >
+              Exportar
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={exportPDF}
+                disabled={isExporting}
+                className={cn(
+                  'py-4 rounded-xl font-black uppercase text-xs tracking-widest text-white disabled:opacity-50',
+                )}
+                style={{ backgroundColor: accentBlue }}
+              >
+                Baixar PDF
+              </button>
+              <button
+                type="button"
+                onClick={shareToWhatsApp}
+                disabled={isExporting}
+                className="py-4 rounded-xl font-black uppercase text-xs tracking-widest bg-[#25D366] text-white disabled:opacity-50"
+              >
+                Enviar (WhatsApp)
+              </button>
+            </div>
+            <p className={cn('text-[10px] uppercase tracking-widest', isDark ? 'text-slate-500' : 'text-slate-400')}>
+              Backup e histórico completo: menu ⋮ → Configurações
+            </p>
+          </section>
+        )}
+
+        {/* ——— PROJETO: formulário + marcações ——— */}
+        {mainTab === 'projeto' && (
+          <>
         <section className={cn(
           "rounded-2xl p-6 shadow-xl border mb-8 transition-colors duration-300",
-          theme === 'dark' ? "bg-[#111111] border-white/5" : "bg-white border-slate-200"
+          isDark ? `${cardBg} ${cardBorder}` : "bg-white border-slate-200"
         )}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
@@ -1052,6 +1439,8 @@ export default function App() {
             </AnimatePresence>
           </div>
         </div>
+          </>
+        )}
       </main>
 
       {/* Settings & History Sheet */}
@@ -1133,6 +1522,24 @@ export default function App() {
                         )}
                       />
                     </div>
+                    <p className={cn(
+                      "text-[10px] uppercase tracking-widest font-bold pt-2",
+                      theme === 'dark' ? "text-white/40" : "text-slate-400"
+                    )}>META DE HORAS NO MÊS (PAINEL)</p>
+                    <input 
+                      type="number" 
+                      min={1}
+                      max={744}
+                      value={monthlyHourGoal || ''}
+                      onChange={(e) => setMonthlyHourGoal(Math.max(1, parseInt(e.target.value, 10) || 160))}
+                      placeholder="160"
+                      className={cn(
+                        "w-full px-4 py-3 border rounded-xl focus:ring-2 outline-none font-black",
+                        theme === 'dark' 
+                          ? "bg-[#1f1f1f] border-white/10 text-white focus:ring-[#D4AF37]" 
+                          : "bg-white border-slate-200 text-slate-900 focus:ring-[#2563EB]"
+                      )}
+                    />
                   </div>
                 </section>
 
