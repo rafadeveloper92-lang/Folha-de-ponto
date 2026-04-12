@@ -1,4 +1,5 @@
 import jsQR from 'jsqr';
+import {encodeQrToDataUrl} from './encodeQrPayload';
 
 /** Safari iOS tem limite de memória em canvas — evitar renders gigantes e muitas variantes. */
 export function isLikelyIos(): boolean {
@@ -391,4 +392,46 @@ export async function extractQrFromPdf(file: File): Promise<QrResult | null> {
       maxIntegerScale: ios ? 5 : 8,
     }),
   };
+}
+
+/**
+ * Lê o QR a partir de uma **foto** (recorte do PDF no ecrã). O payload é o mesmo da ficha;
+ * a imagem mostrada na app é re-gerada localmente com esse payload (leitor do encarregado lê o mesmo dado).
+ */
+export async function extractQrFromImageFile(file: File): Promise<QrResult | null> {
+  if (!file.type.startsWith('image/')) return null;
+  const light = isLikelyIos();
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.decoding = 'async';
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('image'));
+      img.src = url;
+    });
+    const maxSide = light ? 1600 : 2400;
+    let w = img.naturalWidth;
+    let h = img.naturalHeight;
+    if (!w || !h) return null;
+    if (Math.max(w, h) > maxSide) {
+      const r = maxSide / Math.max(w, h);
+      w = Math.floor(w * r);
+      h = Math.floor(h * r);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+    const hit = decodeQrFromCanvas(canvas, light);
+    if (!hit?.payload) return null;
+    const qrImageDataUrl = await encodeQrToDataUrl(hit.payload);
+    return {payload: hit.payload, qrImageDataUrl};
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }

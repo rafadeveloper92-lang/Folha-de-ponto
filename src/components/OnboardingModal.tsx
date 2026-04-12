@@ -1,19 +1,15 @@
 import React, { useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { Camera, FileUp, Loader2, User } from 'lucide-react';
+import { Camera, FileUp, Loader2, User, QrCode } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { fileToCompressedDataUrl } from '../lib/profilePhoto';
 import { extractEmployeeCodeFromPdf } from '../lib/extractEmployeeCodeFromPdf';
-import { extractQrFromPdf, isLikelyIos } from '../lib/extractQrFromPdf';
-import { qrDataUrlFromPayload } from '../lib/qrPlaceholder';
-
-/** Tenta obter código GF… a partir do texto do QR ou do URL. */
-function normalizeManualCode(raw: string): string | null {
-  const s = raw.trim().toUpperCase().replace(/\s/g, '');
-  if (/^GF\d{4,}$/.test(s)) return s;
-  if (/^[A-Z]{2}\d{6,}$/.test(s)) return s;
-  return null;
-}
+import {
+  extractQrFromPdf,
+  extractQrFromImageFile,
+  isLikelyIos,
+} from '../lib/extractQrFromPdf';
+import { encodeQrToDataUrl } from '../lib/encodeQrPayload';
 
 function codeFromQrPayload(payload: string): string | null {
   const trimmed = payload.trim();
@@ -62,10 +58,14 @@ export function OnboardingModal({ onComplete }: Props) {
   const [photo, setPhoto] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfError, setPdfError] = useState('');
-  const [manualEmployeeCode, setManualEmployeeCode] = useState('');
+  /** Foto só do QR (recorte da ficha) — lê o mesmo conteúdo que o encarregado escaneia */
+  const [qrPhotoFile, setQrPhotoFile] = useState<File | null>(null);
+  /** Texto completo lido por outra app (Câmara, Qrafter…) — gera QR local com o mesmo payload */
+  const [qrPayloadPasted, setQrPayloadPasted] = useState('');
   const [busy, setBusy] = useState(false);
   const photoRef = useRef<HTMLInputElement>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
+  const qrPhotoRef = useRef<HTMLInputElement>(null);
 
   const canSubmit =
     name.trim().length > 1 &&
@@ -79,24 +79,36 @@ export function OnboardingModal({ onComplete }: Props) {
     setBusy(true);
     setPdfError('');
     try {
-      let qrFromDoc: {payload: string; qrImageDataUrl: string} | null = null;
+      let qrFromDoc: { payload: string; qrImageDataUrl: string } | null = null;
       try {
         qrFromDoc = await extractQrFromPdf(pdfFile);
       } catch (err) {
         console.warn('extractQrFromPdf', err);
-        /* iOS Safari pode falhar por memória — tentar código manual */
       }
 
-      const manualNorm = normalizeManualCode(manualEmployeeCode);
-      if (!qrFromDoc && manualNorm) {
+      if (!qrFromDoc && qrPhotoFile) {
         try {
-          const qrImageDataUrl = await qrDataUrlFromPayload(manualNorm);
-          qrFromDoc = {payload: manualNorm, qrImageDataUrl};
+          qrFromDoc = await extractQrFromImageFile(qrPhotoFile);
+        } catch (e) {
+          console.warn('extractQrFromImageFile', e);
+        }
+        if (!qrFromDoc) {
+          setPdfError(
+            'Não foi possível ler o QR na foto. Use mais zoom no QR, boa luz e evite reflexos.',
+          );
+          setBusy(false);
+          return;
+        }
+      }
+
+      const pasted = qrPayloadPasted.trim();
+      if (!qrFromDoc && pasted.length >= 4) {
+        try {
+          const qrImageDataUrl = await encodeQrToDataUrl(pasted);
+          qrFromDoc = { payload: pasted, qrImageDataUrl };
         } catch (e) {
           console.error(e);
-          setPdfError(
-            'Não foi possível gerar o QR online. Verifique a internet ou tente noutro dispositivo.',
-          );
+          setPdfError('Não foi possível gerar o QR a partir do texto colado.');
           setBusy(false);
           return;
         }
@@ -105,27 +117,24 @@ export function OnboardingModal({ onComplete }: Props) {
       if (!qrFromDoc) {
         setPdfError(
           isLikelyIos()
-            ? 'No iPhone o PDF por vezes não é lido. Escreva abaixo o código da ficha (ex. GF123456) — o mesmo que aparece no papel — e tente de novo.'
-            : 'Não foi possível ler o QR neste PDF. Use o ficheiro original, ou escreva o código GF manualmente no campo abaixo.',
+            ? 'No iPhone o PDF por vezes não lê o QR. Envie uma foto nítida só do QR (opção A) ou cole o texto completo lido com a Câmara/outra app (opção B). O conteúdo tem de ser o mesmo da ficha — o leitor do encarregado lê esse texto.'
+            : 'Não foi possível ler o QR no PDF. Use foto só do QR ou cole o texto lido por outra app.',
         );
         setBusy(false);
         return;
       }
 
-      let code =
+      const code =
         (await extractEmployeeCodeFromPdf(pdfFile)) ??
-        codeFromQrPayload(qrFromDoc.payload) ??
-        manualNorm;
+        codeFromQrPayload(qrFromDoc.payload);
       if (!code) {
         setPdfError(
-          'Código do colaborador não encontrado no PDF. Escreva o código GF no campo “Código manual (iPhone)”.',
+          'Código do colaborador (ex. GF…) não encontrado no PDF nem no conteúdo do QR. Confirme o PDF completo ou o texto colado.',
         );
         setBusy(false);
         return;
       }
-      if (manualNorm && manualNorm !== code && /^GF\d/.test(manualNorm)) {
-        code = manualNorm;
-      }
+
       const pdfB64 = await fileToBase64(pdfFile);
       await onComplete({
         name: name.trim(),
@@ -138,7 +147,7 @@ export function OnboardingModal({ onComplete }: Props) {
       });
     } catch (e) {
       console.error(e);
-      setPdfError('Erro ao processar o PDF. Tente outro ficheiro ou o código manual no iPhone.');
+      setPdfError('Erro ao processar. Tente foto do QR ou texto colado.');
     } finally {
       setBusy(false);
     }
@@ -270,23 +279,51 @@ export function OnboardingModal({ onComplete }: Props) {
             {pdfError && (
               <p className="mt-2 text-xs text-red-400">{pdfError}</p>
             )}
-            <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-              <label className="mb-1 block text-[10px] font-black uppercase tracking-wider text-amber-200/90">
-                Código manual (iPhone / QR não lido)
+
+            <div className="mt-4 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
+              <label className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-emerald-200/90">
+                <QrCode size={12} /> Mesmo QR que o encarregado lê (se o PDF falhar)
               </label>
-              <p className="mb-2 text-[10px] leading-relaxed text-slate-400">
-                Se o telemóvel não ler o QR do PDF (comum no Safari iOS), escreva aqui o código da
-                ficha, ex. <span className="font-mono text-slate-300">GF123456</span>. O PDF continua
-                obrigatório; será criada uma imagem de QR para o seu perfil.
+              <p className="mb-3 text-[10px] leading-relaxed text-slate-400">
+                O sistema do encarregado lê o <strong className="text-slate-300">conteúdo</strong> do
+                código QR da ficha (URL ou texto). A imagem na app pode ser gerada de novo, mas o{' '}
+                <strong className="text-slate-300">dado</strong> tem de ser o mesmo — não basta só o
+                código GF se o QR tiver um link longo.
+              </p>
+
+              <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                A — Foto só do quadradinho do QR
               </p>
               <input
-                type="text"
-                autoCapitalize="characters"
-                autoCorrect="off"
-                value={manualEmployeeCode}
-                onChange={(e) => setManualEmployeeCode(e.target.value)}
-                placeholder="ex: GF123456"
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-sm uppercase text-slate-100 placeholder:text-slate-600"
+                ref={qrPhotoRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  setQrPhotoFile(f || null);
+                  setPdfError('');
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => qrPhotoRef.current?.click()}
+                className="mb-3 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-left text-xs text-slate-300"
+              >
+                {qrPhotoFile ? qrPhotoFile.name : 'Tirar ou escolher foto do QR…'}
+              </button>
+
+              <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                B — Colar texto lido com a Câmara / app de QR
+              </p>
+              <textarea
+                value={qrPayloadPasted}
+                onChange={(e) => setQrPayloadPasted(e.target.value)}
+                rows={3}
+                placeholder="Cole aqui o texto completo que aparece ao ler o QR da ficha (link ou código)…"
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-[11px] text-slate-200 placeholder:text-slate-600"
               />
             </div>
           </div>
