@@ -19,7 +19,6 @@ import {
   PenTool,
   Upload,
   Database,
-  MessageCircle,
   Share2,
   Sun,
   Moon,
@@ -27,16 +26,44 @@ import {
   LineChart,
   MapPin,
   FileText,
+  Table2,
+  CheckCircle2,
+  Timer,
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { WorkMonth, WorkDay } from './types';
 import { cn } from './lib/utils';
-import { PDFTemplate } from './components/PDFTemplate';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 import SignatureCanvas from 'react-signature-canvas';
-import { db } from './lib/db';
+import type { UserProfile, WorkEntry } from './lib/db';
+import {
+  clearMonth,
+  deleteEntryDay,
+  initStorage,
+  loadAllEntries,
+  loadEntriesForMonth,
+  loadProfile,
+  replaceMonthEntries,
+  restoreData,
+  saveProfile,
+} from './lib/storage';
+import { playShortBeep } from './lib/beep';
+import { buildGsiPdfBlob } from './lib/buildGsiPdf';
+import { downloadPdfBlob, shareOrDownloadPdf } from './lib/pdfHelpers';
+import { gsi } from './gsi/colors';
+import {
+  HoursDonut,
+  TeamRadar,
+  MonthHeatmap,
+  MiniBarValue,
+  BudgetBar,
+} from './components/gsi/GsiCharts';
+import { GsiDashboardHero } from './components/gsi/GsiDashboardHero';
+import { fileToCompressedDataUrl } from './lib/profilePhoto';
+import { SplashIntro } from './components/SplashIntro';
+import { playIntroSound } from './lib/introSound';
+import { OnboardingModal } from './components/OnboardingModal';
+import { GsiQrLightbox } from './components/GsiQrLightbox';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -52,17 +79,37 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [history, setHistory] = useState<{ month: string, hours: number, days: number }[]>([]);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>('light');
   const [defaultProject, setDefaultProject] = useState('');
-  const [mainTab, setMainTab] = useState<'painel' | 'analises' | 'projeto' | 'relatorios'>('painel');
-  const [monthlyHourGoal, setMonthlyHourGoal] = useState(160);
-  
-  const pdfRef = useRef<HTMLDivElement>(null);
+  const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<
+    'dashboard' | 'analytics' | 'project' | 'report' | 'manage'
+  >('dashboard');
+  const [showSplash, setShowSplash] = useState(true);
+  const [onboardingComplete, setOnboardingComplete] = useState(false);
+  const [roleLocked, setRoleLocked] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [employeeCode, setEmployeeCode] = useState<string | null>(null);
+  const [qrLightboxOpen, setQrLightboxOpen] = useState(false);
+  const [employeePdfBase64, setEmployeePdfBase64] = useState<string | null>(null);
+  const [profileReady, setProfileReady] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
   const sigPad = useRef<SignatureCanvas>(null);
   const isInitialMount = useRef(true);
   const isChangingMonth = useRef(false);
+  const introPlayed = useRef(false);
 
   const monthKey = format(currentDate, 'MM_yyyy');
+
+  useEffect(() => {
+    if (!introPlayed.current) {
+      introPlayed.current = true;
+      void playIntroSound();
+    }
+    const t = window.setTimeout(() => setShowSplash(false), 2400);
+    return () => clearTimeout(t);
+  }, []);
 
   // PWA Install Logic
   useEffect(() => {
@@ -75,25 +122,28 @@ export default function App() {
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
-  // Load profile and entries from Dexie
+  // Load profile and entries (SQLite nativo no Android; Dexie no navegador)
   useEffect(() => {
     const loadData = async () => {
-      // Load Profile
-      const profile = await db.profile.get('current');
+      await initStorage();
+      const profile = await loadProfile();
       if (profile) {
         setName(profile.name);
         setRole(profile.role as any);
         setHourlyRate(profile.hourlyRate);
         setSignature(profile.signature || null);
-        if (profile.theme) setTheme(profile.theme);
+        setTheme(profile.theme ?? 'light');
         if (profile.defaultProject) setDefaultProject(profile.defaultProject);
-        if (profile.monthlyHourGoal != null && profile.monthlyHourGoal > 0) {
-          setMonthlyHourGoal(profile.monthlyHourGoal);
-        }
+        if (profile.profilePhoto) setProfilePhoto(profile.profilePhoto);
+        setOnboardingComplete(!!profile.onboardingComplete);
+        setRoleLocked(!!profile.roleLocked);
+        if (profile.qrDataUrl) setQrDataUrl(profile.qrDataUrl);
+        if (profile.employeeCode) setEmployeeCode(profile.employeeCode);
+        if (profile.employeePdfBase64)
+          setEmployeePdfBase64(profile.employeePdfBase64);
       }
 
-      // Load Entries for current month
-      const savedEntries = await db.entries.where('monthKey').equals(monthKey).toArray();
+      const savedEntries = await loadEntriesForMonth(monthKey);
       const entriesMap: Record<string, Partial<WorkDay>> = {};
       savedEntries.forEach(entry => {
         entriesMap[entry.day] = {
@@ -105,8 +155,9 @@ export default function App() {
         };
       });
       setEntries(entriesMap);
-      
+
       isInitialMount.current = false;
+      setProfileReady(true);
     };
     loadData();
   }, [monthKey]);
@@ -114,7 +165,7 @@ export default function App() {
   // Load history
   useEffect(() => {
     const loadHistory = async () => {
-      const allEntries = await db.entries.toArray();
+      const allEntries = await loadAllEntries();
       const historyMap: Record<string, { hours: number, days: Set<number> }> = {};
       
       allEntries.forEach(entry => {
@@ -140,10 +191,9 @@ export default function App() {
     loadHistory();
   }, [entries]);
 
-  // Save Profile to Dexie
   useEffect(() => {
     if (isInitialMount.current) return;
-    db.profile.put({
+    const p: UserProfile = {
       id: 'current',
       name,
       role,
@@ -151,33 +201,81 @@ export default function App() {
       signature: signature || '',
       theme,
       defaultProject,
-      monthlyHourGoal,
-    });
-  }, [name, role, hourlyRate, signature, theme, defaultProject, monthlyHourGoal]);
+      profilePhoto: profilePhoto || undefined,
+      onboardingComplete,
+      roleLocked,
+      qrDataUrl: qrDataUrl || undefined,
+      employeeCode: employeeCode || undefined,
+      employeePdfBase64: employeePdfBase64 || undefined,
+    };
+    void saveProfile(p);
+  }, [
+    name,
+    role,
+    hourlyRate,
+    signature,
+    theme,
+    defaultProject,
+    profilePhoto,
+    onboardingComplete,
+    roleLocked,
+    qrDataUrl,
+    employeeCode,
+    employeePdfBase64,
+  ]);
 
-  // Save Entries to Dexie
+  const handleOnboardingComplete = async (data: {
+    name: string;
+    role: 'Oficial' | 'Ajudante';
+    hourlyRate: number;
+    profilePhoto: string;
+    employeePdfBase64: string;
+    employeeCode: string;
+    qrDataUrl: string;
+  }) => {
+    setName(data.name);
+    setRole(data.role);
+    setHourlyRate(data.hourlyRate);
+    setProfilePhoto(data.profilePhoto);
+    setEmployeePdfBase64(data.employeePdfBase64);
+    setEmployeeCode(data.employeeCode);
+    setQrDataUrl(data.qrDataUrl);
+    setOnboardingComplete(true);
+    setRoleLocked(true);
+    await saveProfile({
+      id: 'current',
+      name: data.name,
+      role: data.role,
+      hourlyRate: data.hourlyRate,
+      signature: '',
+      theme,
+      defaultProject: defaultProject || undefined,
+      profilePhoto: data.profilePhoto,
+      onboardingComplete: true,
+      roleLocked: true,
+      employeePdfBase64: data.employeePdfBase64,
+      employeeCode: data.employeeCode,
+      qrDataUrl: data.qrDataUrl,
+    });
+  };
+
   useEffect(() => {
     if (isInitialMount.current) return;
-    
+
     const saveEntries = async () => {
-      // Clear current month entries first to avoid duplicates or stale data
-      await db.entries.where('monthKey').equals(monthKey).delete();
-      
-      const entriesToSave = Object.entries(entries).map(([day, data]) => ({
+      const entriesToSave: WorkEntry[] = Object.entries(entries).map(([day, data]) => ({
         monthKey,
-        day: parseInt(day),
+        day: parseInt(day, 10),
         project: data.project || '',
         description: data.description || '',
         hours: data.hours || '',
-        marked: data.marked || false
+        marked: data.marked || false,
       }));
-      
-      if (entriesToSave.length > 0) {
-        await db.entries.bulkAdd(entriesToSave);
-      }
+
+      await replaceMonthEntries(monthKey, entriesToSave);
     };
-    
-    saveEntries();
+
+    void saveEntries();
   }, [entries, monthKey]);
 
   const handleInstallClick = async () => {
@@ -222,8 +320,7 @@ export default function App() {
       }
     }));
     
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
-    audio.play().catch(e => console.log('Audio play failed', e));
+    void playShortBeep();
     setSavingDay(day);
     setTimeout(() => setSavingDay(null), 1000);
   };
@@ -241,8 +338,7 @@ export default function App() {
       }
     }));
     
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
-    audio.play().catch(e => console.log('Audio play failed', e));
+    void playShortBeep();
     setSavingDay(day);
     setTimeout(() => setSavingDay(null), 1000);
   };
@@ -254,7 +350,7 @@ export default function App() {
         delete newEntries[day];
         return newEntries;
       });
-      db.entries.where({ day, monthKey }).delete();
+      void deleteEntryDay(day, monthKey);
     }
   };
 
@@ -297,86 +393,7 @@ export default function App() {
       return newEntries;
     });
     
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
-    audio.play().catch(e => console.log('Audio play failed', e));
-  };
-
-  const shareToWhatsApp = async () => {
-    if (!pdfRef.current) return;
-    setIsExporting(true);
-    
-    try {
-      window.scrollTo(0, 0);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const canvas = await html2canvas(pdfRef.current, {
-        scale: 2,
-        useCORS: true,
-      });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      
-      const pdfBlob = pdf.output('blob');
-      const fileName = `GSI_Ponto_${name || 'Funcionario'}_${format(currentDate, 'MM_yyyy')}.pdf`;
-      const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
-
-      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: 'Meu Ponto GSI',
-          text: `Aqui está o meu ponto da GSI referente a ${format(currentDate, 'MMMM yyyy', { locale: ptBR })}.`,
-        });
-      } else {
-        // Fallback: Just open WhatsApp with a message
-        const message = encodeURIComponent(`Olá, estou enviando meu ponto da GSI referente a ${format(currentDate, 'MMMM yyyy', { locale: ptBR })}. Acabei de baixar o PDF.`);
-        window.open(`https://wa.me/?text=${message}`, '_blank');
-        // Also trigger download as fallback
-        pdf.save(fileName);
-      }
-    } catch (error) {
-      console.error('Error sharing PDF:', error);
-      alert('Houve um erro ao compartilhar. O PDF será baixado em vez disso.');
-      exportPDF();
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const exportPDF = async () => {
-    if (!pdfRef.current) return;
-    setIsExporting(true);
-    
-    try {
-      window.scrollTo(0, 0);
-      // Small delay to ensure template is rendered and scroll finished
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const canvas = await html2canvas(pdfRef.current, {
-        scale: 2,
-        useCORS: true,
-        logging: true,
-        allowTaint: true,
-      });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`GSI_Ponto_${name || 'Funcionario'}_${format(currentDate, 'MM_yyyy')}.pdf`);
-      console.log('PDF generated successfully');
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-      alert('Houve um erro ao gerar o PDF. Por favor, tente novamente.');
-    } finally {
-      setIsExporting(false);
-    }
+    void playShortBeep();
   };
 
   const handleClearSignature = () => {
@@ -441,8 +458,8 @@ export default function App() {
   };
 
   const handleBackupData = async () => {
-    const profile = await db.profile.get('current');
-    const entries = await db.entries.toArray();
+    const profile = await loadProfile();
+    const entries = await loadAllEntries();
     
     const backupData = {
       profile,
@@ -469,16 +486,7 @@ export default function App() {
       try {
         const data = JSON.parse(e.target?.result as string);
         if (confirm('Isso irá substituir todos os seus dados atuais. Deseja continuar?')) {
-          await db.profile.clear();
-          await db.entries.clear();
-          
-          if (data.profile) {
-            await db.profile.put(data.profile);
-          }
-          if (data.entries && Array.isArray(data.entries)) {
-            await db.entries.bulkAdd(data.entries);
-          }
-          
+          await restoreData(data.profile, data.entries ?? []);
           window.location.reload();
         }
       } catch (err) {
@@ -504,25 +512,6 @@ export default function App() {
 
   const totalEarnings = totalHours * hourlyRate;
 
-  const hourGoal = monthlyHourGoal > 0 ? monthlyHourGoal : 160;
-  const progressToGoal = Math.min(totalHours / hourGoal, 1);
-  const profileInitials =
-    name
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((w) => w[0])
-      .join('')
-      .toUpperCase() || '?';
-  const profileQrPayload = JSON.stringify({
-    app: 'GSI Tracker',
-    nome: name || '—',
-    cargo: role || '—',
-    mes: format(currentDate, 'MM/yyyy'),
-  });
-  const profileQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(profileQrPayload)}`;
-
   const workMonthData: WorkMonth = {
     name,
     role,
@@ -532,6 +521,37 @@ export default function App() {
     signature: signature || undefined,
     totalHours,
     totalEarnings
+  };
+
+  const pdfFileBase = () =>
+    `GSI_Ponto_${(name || 'Funcionario').replace(/\s+/g, '_')}_${format(currentDate, 'MM_yyyy')}.pdf`;
+
+  const shareToWhatsApp = async () => {
+    setIsExporting(true);
+    try {
+      const blob = buildGsiPdfBlob(workMonthData);
+      const fileName = pdfFileBase();
+      const shareText = `Ponto GSI — ${format(currentDate, 'MMMM yyyy', { locale: ptBR })}`;
+      await shareOrDownloadPdf(blob, fileName, 'Ponto GSI', shareText);
+    } catch (error) {
+      console.error('Error sharing PDF:', error);
+      alert('Não foi possível gerar o PDF. Tente novamente.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const exportPDF = async () => {
+    setIsExporting(true);
+    try {
+      const blob = buildGsiPdfBlob(workMonthData);
+      await downloadPdfBlob(blob, pdfFileBase());
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Houve um erro ao gerar o PDF. Tente novamente.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const copyPrevious = (dayNum: number) => {
@@ -551,18 +571,71 @@ export default function App() {
     }
   };
 
-  const isDark = theme === 'dark';
-  const pageBg = isDark ? 'bg-[#0d1117]' : 'bg-white';
-  const cardBg = isDark ? 'bg-[#161b22]' : 'bg-white';
-  const cardBorder = isDark ? 'border-white/[0.08]' : 'border-slate-200';
-  const accentBlue = '#2166ff';
-  const accentGreen = '#2ea043';
+  const handleProfilePhotoChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const f = e.target.files?.[0];
+    if (!f?.type.startsWith('image/')) return;
+    try {
+      setProfilePhoto(await fileToCompressedDataUrl(f));
+    } catch {
+      alert('Não foi possível carregar a foto.');
+    }
+    e.target.value = '';
+  };
+
+  const heatIntensity: Record<number, number> = {};
+  days.forEach((d) => {
+    const dn = d.getDate();
+    const e = entries[dn];
+    if (!e?.hours) {
+      heatIntensity[dn] = 0;
+      return;
+    }
+    const m = e.hours.match(/\d+/);
+    const h = m ? parseInt(m[0], 10) : 0;
+    heatIntensity[dn] = Math.min(4, Math.max(1, Math.ceil(h / 2.5)));
+  });
+
+  const oficialRadar = role === 'Oficial' ? 72 : 38;
+  const ajudanteRadar = role === 'Ajudante' ? 72 : 38;
+  const budgetPct =
+    totalHours > 0 ? Math.min(100, Math.round((totalHours / 200) * 100)) : 0;
+
+  const tabs = [
+    { id: 'dashboard' as const, label: 'Painel', icon: LayoutDashboard },
+    { id: 'analytics' as const, label: 'Análises', icon: LineChart },
+    { id: 'project' as const, label: 'Projeto', icon: MapPin },
+    { id: 'report' as const, label: 'Relatório', icon: FileText },
+    { id: 'manage' as const, label: 'Gestão', icon: Table2 },
+  ];
+
+  const isDarkUi = theme === 'dark';
 
   return (
     <div className={cn(
-      'min-h-screen transition-colors duration-300 pb-24 sm:pb-20',
-      isDark ? `${pageBg} text-white` : 'bg-white text-slate-900',
+      "min-h-screen transition-colors duration-300 pb-10",
+      theme === 'dark' ? "bg-black text-white" : "bg-slate-50 text-slate-900"
     )}>
+      <AnimatePresence>
+        {showSplash && <SplashIntro key="splash-intro" />}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {profileReady && !onboardingComplete && !showSplash && (
+          <OnboardingModal key="onboarding" onComplete={handleOnboardingComplete} />
+        )}
+      </AnimatePresence>
+
+      {qrDataUrl && (
+        <GsiQrLightbox
+          open={qrLightboxOpen}
+          onClose={() => setQrLightboxOpen(false)}
+          qrDataUrl={qrDataUrl}
+          label={employeeCode ?? undefined}
+        />
+      )}
+
       {/* PWA Install Banner */}
       <AnimatePresence>
         {showInstallBanner && (
@@ -607,481 +680,425 @@ export default function App() {
       </AnimatePresence>
 
       {/* Header */}
-      <header
-        className={cn(
-          'backdrop-blur-md border-b sticky top-0 z-30 shadow-lg',
-          isDark ? 'bg-[#0d1117]/95 border-white/[0.06]' : 'bg-white/90 border-slate-200',
-        )}
-      >
-        <div className="max-w-5xl mx-auto px-4 h-14 sm:h-16 flex items-center justify-between">
+      <header className={cn(
+        "backdrop-blur-md border-b sticky top-0 z-30 shadow-lg",
+        theme === 'dark' ? "bg-black/80 border-white/10" : "bg-white/80 border-slate-200"
+      )}>
+        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div
-              className={cn(
-                'w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center text-white font-black text-xl sm:text-2xl shadow-lg shrink-0',
-                isDark ? 'bg-[#D4AF37] shadow-[#D4AF37]/40' : 'bg-[#2563EB] shadow-[#2563EB]/50',
-              )}
-            >
+            <div className={cn(
+              "w-10 h-10 rounded-lg flex items-center justify-center text-white font-black text-2xl shadow-lg",
+              theme === 'dark' ? "bg-[#D4AF37] shadow-[#D4AF37]/50" : "bg-[#2563EB] shadow-[#2563EB]/50"
+            )}>
               G
             </div>
-            <h1
-              className={cn(
-                'font-black text-lg sm:text-xl tracking-tighter hidden sm:block',
-                isDark ? 'text-white' : 'text-slate-900',
-              )}
-            >
-              GSI TRACKER
-            </h1>
+            <h1 className={cn(
+              "font-black text-xl tracking-tighter hidden sm:block",
+              theme === 'dark' ? "text-white" : "text-slate-900"
+            )}>GSI TRACKER</h1>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-3">
-            <button
-              type="button"
-              onClick={() => setTheme(isDark ? 'light' : 'dark')}
+          <div className="flex items-center gap-2 sm:gap-4">
+            <button 
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
               className={cn(
-                'p-2 rounded-full transition-all active:scale-90',
-                isDark
-                  ? 'bg-white/10 text-amber-300 hover:bg-white/15'
-                  : 'bg-slate-200 text-slate-600 hover:bg-slate-300',
+                "p-2 rounded-full transition-all active:scale-90",
+                theme === 'dark' ? "bg-white/10 text-yellow-400 hover:bg-white/20" : "bg-slate-200 text-slate-600 hover:bg-slate-300"
               )}
-              title={isDark ? 'Modo claro' : 'Modo escuro'}
+              title={theme === 'dark' ? "Mudar para Modo Claro" : "Mudar para Modo Escuro"}
             >
-              {isDark ? <Sun size={20} /> : <Moon size={20} />}
+              {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
             </button>
 
-            <button
-              type="button"
+            <button 
               onClick={shareToWhatsApp}
               disabled={isExporting}
-              className={cn(
-                'flex items-center justify-center w-10 h-10 sm:w-auto sm:h-10 sm:px-4 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50',
-                'bg-[#25D366] hover:bg-[#128C7E] text-white shadow-[0_0_12px_rgba(37,211,102,0.35)]',
-              )}
-              title="WhatsApp"
+              className="flex items-center gap-1.5 sm:gap-2 bg-[#25D366] hover:bg-[#128C7E] text-white px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-bold transition-all active:scale-95 disabled:opacity-50"
+              title="Compartilhar PDF (WhatsApp ou outras apps)"
             >
               {isExporting ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <>
-                  <Share2 size={18} className="sm:hidden" />
-                  <span className="hidden sm:flex items-center gap-2">
-                    <MessageCircle size={18} />
-                    WHATSAPP
-                  </span>
-                </>
+                <Share2 size={18} />
               )}
+              <span className="hidden sm:inline">Partilhar</span>
             </button>
 
+            <button 
+              onClick={exportPDF}
+              disabled={isExporting}
+              className={cn(
+                "flex items-center gap-1.5 sm:gap-2 text-white px-3 sm:px-5 py-2 rounded-full text-xs sm:text-sm font-bold transition-all active:scale-95 disabled:opacity-50 shadow-lg",
+                theme === 'dark' ? "bg-[#D4AF37] hover:bg-[#b8962f] shadow-[#D4AF37]/30" : "bg-[#2563EB] hover:bg-[#1d4ed8] shadow-[#2563EB]/30"
+              )}
+              title="Descarregar PDF"
+            >
+              {isExporting ? (
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Download size={18} />
+              )}
+              <span className="hidden sm:inline">PDF</span>
+            </button>
+
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className={cn(
+                "p-2 rounded-full transition-colors",
+                theme === 'dark' ? "hover:bg-white/10 text-white/70" : "hover:bg-slate-100 text-slate-400"
+              )}
+            >
+              <MoreVertical size={24} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleProfilePhotoChange}
+      />
+
+      <main
+        className={cn(
+          'max-w-5xl mx-auto px-4 py-6 pb-28',
+          isDarkUi && 'min-h-screen',
+        )}
+        style={isDarkUi ? { background: gsi.navyBg } : undefined}
+      >
+        <nav
+          className={cn(
+            'flex gap-1 overflow-x-auto pb-3 mb-6 -mx-1 px-1 scrollbar-hide',
+            isDarkUi && 'border-b border-white/5',
+          )}
+        >
+          {tabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActiveTab(id)}
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-[10px] font-black uppercase tracking-wider transition-all',
+                activeTab === id
+                  ? isDarkUi
+                    ? 'bg-blue-600 text-white shadow-lg'
+                    : 'bg-blue-600 text-white'
+                  : isDarkUi
+                    ? 'bg-white/5 text-slate-500 hover:bg-white/10'
+                    : 'bg-slate-100 text-slate-600',
+              )}
+            >
+              <Icon size={14} />
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {activeTab === 'analytics' && (
+          <div
+            className={cn(
+              'rounded-3xl border p-6 mb-8',
+              isDarkUi
+                ? 'border-blue-500/20 bg-[#151d32]'
+                : 'bg-white border-slate-200',
+            )}
+          >
+            <TeamRadar oficialPct={oficialRadar} ajudantePct={ajudanteRadar} />
+            <p className="text-center text-xs text-slate-500 mt-2">
+              Distribuição por cargo no período atual (simulado a partir do seu
+              perfil).
+            </p>
+          </div>
+        )}
+
+        {activeTab === 'project' && (
+          <div className="space-y-6 mb-8">
+            <div
+              className={cn(
+                'rounded-3xl border overflow-hidden',
+                isDarkUi
+                  ? 'border-blue-500/20 bg-[#151d32]'
+                  : 'bg-white border-slate-200',
+              )}
+            >
+              <div className="px-4 py-3 border-b border-white/5">
+                <h3 className="text-lg font-black uppercase tracking-tight text-slate-100">
+                  {defaultProject || 'Obra / projeto'}
+                </h3>
+                <p className="text-[10px] font-bold uppercase text-slate-500 mt-1">
+                  Localização: Espanha (referência)
+                </p>
+              </div>
+              <div className="h-40 bg-slate-800/80 flex items-center justify-center text-slate-500 text-xs">
+                <MapPin className="mr-2" size={18} />
+                Mapa — vista em breve
+              </div>
+            </div>
+            <BudgetBar pct={budgetPct} />
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { t: 'Oficial', n: name || '—', on: true },
+                { t: 'Ajudante', n: 'Equipa', on: false },
+              ].map((x) => (
+                <div
+                  key={x.t}
+                  className="rounded-2xl border border-blue-500/20 bg-[#151d32] p-4"
+                >
+                  <p className="text-[10px] font-black uppercase text-slate-500">
+                    {x.t}
+                  </p>
+                  <p className="font-bold text-slate-200 truncate">{x.n}</p>
+                  <span
+                    className={cn(
+                      'inline-flex mt-2 items-center gap-1 text-[10px] font-bold',
+                      x.on ? 'text-emerald-400' : 'text-slate-500',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'h-2 w-2 rounded-full',
+                        x.on ? 'bg-emerald-400' : 'bg-slate-600',
+                      )}
+                    />
+                    {x.on ? 'Online' : '—'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'report' && (
+          <div
+            className={cn(
+              'rounded-3xl border p-6 mb-8 space-y-6',
+              isDarkUi
+                ? 'border-blue-500/20 bg-[#151d32]'
+                : 'bg-white border-slate-200 shadow-sm',
+            )}
+          >
+            <div>
+              <label
+                className={cn(
+                  'text-[10px] font-black uppercase block mb-2',
+                  isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                )}
+              >
+                Nome do colaborador
+              </label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className={cn(
+                  'w-full rounded-xl border px-4 py-3',
+                  isDarkUi
+                    ? 'border-white/10 bg-black/30 text-slate-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-900',
+                )}
+              />
+            </div>
+            <div>
+              <label
+                className={cn(
+                  'text-[10px] font-black uppercase block mb-2',
+                  isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                )}
+              >
+                Registos do período
+              </label>
+              <p
+                className={cn(
+                  'text-lg font-black',
+                  isDarkUi ? 'text-slate-200' : 'text-slate-900',
+                )}
+              >
+                {format(currentDate, 'MMMM yyyy', { locale: ptBR })}
+              </p>
+            </div>
+            <div>
+              <label
+                className={cn(
+                  'text-[10px] font-black uppercase block mb-2',
+                  isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                )}
+              >
+                Assinatura digital
+              </label>
+              {signature ? (
+                <img
+                  src={signature}
+                  alt=""
+                  className={cn(
+                    'h-20 object-contain rounded-lg p-2',
+                    isDarkUi ? 'bg-white/5' : 'bg-slate-100',
+                  )}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsSignatureOpen(true)}
+                  className={cn(
+                    'w-full rounded-xl border-2 border-dashed py-8 text-sm',
+                    isDarkUi
+                      ? 'border-white/20 text-slate-500'
+                      : 'border-slate-300 text-slate-500',
+                  )}
+                >
+                  Toque para assinar
+                </button>
+              )}
+            </div>
+            <div className="opacity-90 scale-90 origin-top">
+              <MonthHeatmap
+                year={currentDate.getFullYear()}
+                month={currentDate.getMonth() + 1}
+                intensityByDay={heatIntensity}
+              />
+            </div>
             <button
               type="button"
               onClick={exportPDF}
               disabled={isExporting}
-              className={cn(
-                'flex items-center justify-center w-10 h-10 sm:w-auto sm:h-10 sm:px-5 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50 text-white shadow-lg',
-                isDark
-                  ? 'bg-[#D4AF37] hover:bg-[#c9a432] shadow-[#D4AF37]/25'
-                  : 'bg-[#2563EB] hover:bg-[#1d4ed8] shadow-[#2563EB]/30',
-              )}
-              title="PDF"
+              className="w-full rounded-2xl bg-blue-600 py-4 text-sm font-black uppercase tracking-widest text-white shadow-xl shadow-blue-600/30 disabled:opacity-50"
             >
-              {isExporting ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                <>
-                  <Download size={18} className="sm:hidden" />
-                  <span className="hidden sm:flex items-center gap-2">
-                    <Download size={18} />
-                    PDF
-                  </span>
-                </>
-              )}
+              {isExporting ? 'A gerar…' : 'Gerar relatório PDF'}
             </button>
-
-            <button
-              type="button"
-              onClick={() => setIsSettingsOpen(true)}
-              className={cn(
-                'p-2 rounded-full transition-colors',
-                isDark ? 'hover:bg-white/10 text-white/70' : 'hover:bg-slate-100 text-slate-400',
-              )}
-            >
-              <MoreVertical size={22} />
-            </button>
-          </div>
-        </div>
-
-        {/* Abas estilo app Android */}
-        <div
-          className={cn(
-            'max-w-5xl mx-auto px-3 sm:px-4 pb-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
-            isDark ? 'border-b border-white/[0.06]' : 'border-b border-slate-100',
-          )}
-        >
-          <nav className="flex gap-2 min-w-max py-1" aria-label="Navegação principal">
-            {(
-              [
-                { id: 'painel' as const, label: 'PAINEL', Icon: LayoutDashboard },
-                { id: 'analises' as const, label: 'ANÁLISES', Icon: LineChart },
-                { id: 'projeto' as const, label: 'PROJETO', Icon: MapPin },
-                { id: 'relatorios' as const, label: 'RELATÓRIOS', Icon: FileText },
-              ] as const
-            ).map(({ id, label, Icon }) => {
-              const active = mainTab === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setMainTab(id)}
-                  className={cn(
-                    'flex items-center gap-2 px-4 py-2.5 rounded-full text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all shrink-0',
-                    active
-                      ? isDark
-                        ? 'text-white shadow-md'
-                        : 'text-white shadow-md'
-                      : isDark
-                        ? 'bg-[#161b22] text-slate-400 hover:text-slate-200 border border-white/[0.06]'
-                        : 'bg-slate-100 text-slate-500 hover:text-slate-700 border border-slate-200',
-                  )}
-                  style={
-                    active
-                      ? {
-                          backgroundColor: accentBlue,
-                          boxShadow: `0 4px 14px ${accentBlue}55`,
-                        }
-                      : undefined
-                  }
-                >
-                  <Icon size={16} strokeWidth={2.25} />
-                  {label}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-      </header>
-
-      <main className="max-w-5xl mx-auto px-4 py-5 sm:py-8">
-        {/* ——— PAINEL (dashboard estilo Android) ——— */}
-        {mainTab === 'painel' && (
-          <div className="space-y-4 mb-8">
-            <section
-              className={cn(
-                'rounded-2xl p-5 sm:p-6 border shadow-xl',
-                cardBg,
-                cardBorder,
-              )}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div
-                  className={cn(
-                    'w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-lg sm:text-xl font-black border-2 shrink-0',
-                    isDark
-                      ? 'bg-[#21262d] border-[#30363d] text-white'
-                      : 'bg-slate-100 border-slate-200 text-slate-800',
-                  )}
-                >
-                  {profileInitials}
-                </div>
-                <div className="shrink-0 rounded-xl overflow-hidden border border-white/10 bg-white p-1">
-                  <img
-                    src={profileQrUrl}
-                    alt="QR do perfil"
-                    width={72}
-                    height={72}
-                    className="w-[72px] h-[72px] sm:w-20 sm:h-20"
-                  />
-                </div>
-              </div>
-              <h2
-                className={cn(
-                  'mt-4 text-base sm:text-lg font-black uppercase tracking-tight leading-snug',
-                  isDark ? 'text-white' : 'text-slate-900',
-                )}
-              >
-                {name.trim() || 'NOME DO COLABORADOR'}
-              </h2>
-              <div className="mt-3 inline-flex">
-                <span
-                  className="px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest text-white"
-                  style={{ backgroundColor: accentBlue }}
-                >
-                  {role || 'CARGO'}
-                </span>
-              </div>
-            </section>
-
-            <section
-              className={cn(
-                'rounded-2xl p-5 sm:p-6 border shadow-xl',
-                cardBg,
-                cardBorder,
-              )}
-            >
-              <p
-                className={cn(
-                  'text-[10px] font-black uppercase tracking-[0.2em] mb-4',
-                  isDark ? 'text-slate-500' : 'text-slate-400',
-                )}
-              >
-                TOTAL DE HORAS (MÊS)
-              </p>
-              <div className="flex flex-col items-center">
-                <div className="relative w-44 h-44 sm:w-52 sm:h-52">
-                  <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
-                    {(() => {
-                      const r = 38;
-                      const c = 2 * Math.PI * r;
-                      const g = progressToGoal * c;
-                      const b = Math.max(0, (1 - progressToGoal) * c);
-                      return (
-                        <>
-                          <circle
-                            cx="50"
-                            cy="50"
-                            r={r}
-                            fill="none"
-                            stroke={isDark ? '#21262d' : '#e2e8f0'}
-                            strokeWidth="10"
-                          />
-                          <circle
-                            cx="50"
-                            cy="50"
-                            r={r}
-                            fill="none"
-                            stroke={accentGreen}
-                            strokeWidth="10"
-                            strokeDasharray={`${g} ${c}`}
-                            strokeLinecap="round"
-                          />
-                          <circle
-                            cx="50"
-                            cy="50"
-                            r={r}
-                            fill="none"
-                            stroke={accentBlue}
-                            strokeWidth="10"
-                            strokeDasharray={`${b} ${c}`}
-                            strokeDashoffset={-g}
-                            strokeLinecap="round"
-                          />
-                        </>
-                      );
-                    })()}
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                    <span
-                      className={cn(
-                        'text-2xl sm:text-3xl font-black tabular-nums',
-                        isDark ? 'text-white' : 'text-slate-900',
-                      )}
-                    >
-                      {totalHours}h
-                    </span>
-                  </div>
-                </div>
-                <p
-                  className={cn(
-                    'mt-2 text-xs font-bold uppercase tracking-widest',
-                    isDark ? 'text-slate-500' : 'text-slate-400',
-                  )}
-                >
-                  {totalHours}H / META {hourGoal}H
-                </p>
-              </div>
-            </section>
-
-            <section
-              className={cn(
-                'rounded-2xl p-5 sm:p-6 border shadow-xl',
-                cardBg,
-                cardBorder,
-              )}
-            >
-              <p
-                className={cn(
-                  'text-[10px] font-black uppercase tracking-[0.2em] mb-2',
-                  isDark ? 'text-slate-500' : 'text-slate-400',
-                )}
-              >
-                VALOR ESTIMADO
-              </p>
-              <p
-                className="text-3xl sm:text-4xl font-black tabular-nums"
-                style={{ color: accentGreen }}
-              >
-                €{totalEarnings.toFixed(2)}
-              </p>
-              <div className="mt-4 flex flex-col gap-2">
-                {[0.45, 0.72, 0.55, 0.9].map((w, i) => (
-                  <div
-                    key={i}
-                    className={cn('h-2 rounded-full overflow-hidden', isDark ? 'bg-[#21262d]' : 'bg-slate-100')}
-                  >
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${w * 100}%`,
-                        backgroundColor: accentBlue,
-                        opacity: 0.55 + i * 0.1,
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <p
-              className={cn(
-                'text-center text-[10px] uppercase tracking-widest font-bold px-2',
-                isDark ? 'text-slate-500' : 'text-slate-400',
-              )}
-            >
-              Ajuste valor/hora e meta em ⋮ → Configurações. Marcações em PROJETO.
-            </p>
           </div>
         )}
 
-        {/* ——— ANÁLISES ——— */}
-        {mainTab === 'analises' && (
-          <section
+        {activeTab === 'manage' && (
+          <div
             className={cn(
-              'rounded-2xl p-6 border shadow-xl mb-8',
-              cardBg,
-              cardBorder,
+              'rounded-3xl border p-4 mb-8 overflow-x-auto',
+              isDarkUi
+                ? 'border-blue-500/20 bg-[#151d32]'
+                : 'bg-white border-slate-200',
             )}
           >
-            <h2
-              className={cn(
-                'text-sm font-black uppercase tracking-widest mb-6',
-                isDark ? 'text-white' : 'text-slate-900',
-              )}
-            >
-              Resumo por mês
-            </h2>
-            {history.length === 0 ? (
-              <p className={cn('text-sm', isDark ? 'text-slate-500' : 'text-slate-400')}>
-                Ainda não há dados salvos. Registre dias na aba PROJETO.
-              </p>
-            ) : (
-              <div className="space-y-4">
-                {history.slice(0, 8).map((item) => {
-                  const maxH = Math.max(...history.map((h) => h.hours), 1);
-                  const barW = (item.hours / maxH) * 100;
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-white/10 text-[10px] font-black uppercase text-slate-500">
+                  <th className="py-2 pr-2">Data</th>
+                  <th className="py-2 pr-2">Projeto</th>
+                  <th className="py-2 pr-2">Estado</th>
+                  <th className="py-2">Opções</th>
+                </tr>
+              </thead>
+              <tbody>
+                {days.map((d) => {
+                  const dn = d.getDate();
+                  const e = entries[dn];
                   return (
-                    <div key={item.month}>
-                      <div className="flex justify-between text-[10px] font-black uppercase tracking-wider mb-1">
-                        <span className={isDark ? 'text-slate-400' : 'text-slate-500'}>{item.month}</span>
-                        <span style={{ color: accentGreen }}>{item.hours}h</span>
-                      </div>
-                      <div className={cn('h-2 rounded-full overflow-hidden', isDark ? 'bg-[#21262d]' : 'bg-slate-100')}>
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{ width: `${barW}%`, backgroundColor: accentBlue }}
-                        />
-                      </div>
-                    </div>
+                    <tr
+                      key={dn}
+                      className="border-b border-white/5 text-slate-300"
+                    >
+                      <td className="py-2 font-mono">
+                        {format(d, 'dd/MM', { locale: ptBR })}
+                      </td>
+                      <td className="py-2 max-w-[120px] truncate">
+                        {e?.project || '—'}
+                      </td>
+                      <td className="py-2">
+                        {e?.marked ? (
+                          <CheckCircle2 className="inline text-emerald-400" size={16} />
+                        ) : (
+                          <Timer className="inline text-blue-400" size={16} />
+                        )}
+                      </td>
+                      <td className="py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleResetDay(dn)}
+                          className="text-blue-400"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
                   );
                 })}
-              </div>
-            )}
-          </section>
+              </tbody>
+            </table>
+          </div>
         )}
 
-        {/* ——— RELATÓRIOS ——— */}
-        {mainTab === 'relatorios' && (
-          <section
-            className={cn(
-              'rounded-2xl p-6 border shadow-xl mb-8 space-y-4',
-              cardBg,
-              cardBorder,
-            )}
-          >
-            <h2
+        {activeTab === 'dashboard' && (
+          <>
+            <GsiDashboardHero
+              name={name}
+              setName={setName}
+              role={role || 'Oficial'}
+              setRole={(r) => setRole(r)}
+              profilePhoto={profilePhoto}
+              onPickPhoto={() => photoInputRef.current?.click()}
+              isDark={isDarkUi}
+              roleLocked={roleLocked}
+              qrDataUrl={qrDataUrl}
+              onQrClick={
+                qrDataUrl ? () => setQrLightboxOpen(true) : undefined
+              }
+            />
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+              <div
+                className={cn(
+                  'rounded-3xl border p-4 lg:col-span-1',
+                  isDarkUi
+                    ? 'border-blue-500/20 bg-[#151d32]'
+                    : 'bg-white border-slate-200 shadow-sm',
+                )}
+              >
+                <p
+                  className={cn(
+                    'text-[10px] font-black uppercase tracking-widest mb-2',
+                    isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                  )}
+                >
+                  Total de horas (mês)
+                </p>
+                <HoursDonut totalHours={totalHours} />
+              </div>
+              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <MiniBarValue
+                  label="Valor estimado"
+                  value={`€${totalEarnings.toFixed(2)}`}
+                  isDark={isDarkUi}
+                />
+                <MiniBarValue
+                  label="Dias registados"
+                  value={`${Object.keys(entries).length}`}
+                  isDark={isDarkUi}
+                />
+              </div>
+            </div>
+
+            <div
               className={cn(
-                'text-sm font-black uppercase tracking-widest',
-                isDark ? 'text-white' : 'text-slate-900',
+                'rounded-3xl border p-4 mb-6',
+                isDarkUi
+                  ? 'border-blue-500/20 bg-[#151d32]'
+                  : 'bg-white border-slate-200',
               )}
             >
-              Exportar
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={exportPDF}
-                disabled={isExporting}
-                className={cn(
-                  'py-4 rounded-xl font-black uppercase text-xs tracking-widest text-white disabled:opacity-50',
-                )}
-                style={{ backgroundColor: accentBlue }}
-              >
-                Baixar PDF
-              </button>
-              <button
-                type="button"
-                onClick={shareToWhatsApp}
-                disabled={isExporting}
-                className="py-4 rounded-xl font-black uppercase text-xs tracking-widest bg-[#25D366] text-white disabled:opacity-50"
-              >
-                Enviar (WhatsApp)
-              </button>
+              <MonthHeatmap
+                year={currentDate.getFullYear()}
+                month={currentDate.getMonth() + 1}
+                intensityByDay={heatIntensity}
+              />
+              <p className="mt-4 text-center text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                Próximos passos: finalize as marcações pendentes
+              </p>
             </div>
-            <p className={cn('text-[10px] uppercase tracking-widest', isDark ? 'text-slate-500' : 'text-slate-400')}>
-              Backup e histórico completo: menu ⋮ → Configurações
-            </p>
-          </section>
-        )}
 
-        {/* ——— PROJETO: formulário + marcações ——— */}
-        {mainTab === 'projeto' && (
-          <>
         <section className={cn(
           "rounded-2xl p-6 shadow-xl border mb-8 transition-colors duration-300",
-          isDark ? `${cardBg} ${cardBorder}` : "bg-white border-slate-200"
+          theme === 'dark' ? "bg-[#111111] border-white/5" : "bg-white border-slate-200"
         )}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className={cn(
-                "text-xs font-black flex items-center gap-2 uppercase tracking-widest",
-                theme === 'dark' ? "text-white/40" : "text-slate-400"
-              )}>
-                <User size={12} /> NOME DO COLABORADOR
-              </label>
-              <input 
-                type="text" 
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Digite seu nome completo"
-                className={cn(
-                  "w-full px-4 py-3 border rounded-xl focus:ring-2 outline-none transition-all placeholder:text-white/20",
-                  theme === 'dark' ? "bg-black border-white/10 text-white focus:ring-[#D4AF37]" : "bg-slate-50 border-slate-200 text-slate-900 focus:ring-[#2563EB]"
-                )}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className={cn(
-                "text-xs font-black flex items-center gap-2 uppercase tracking-widest",
-                theme === 'dark' ? "text-white/40" : "text-slate-400"
-              )}>
-                <Briefcase size={12} /> CARGO
-              </label>
-              <div className="flex gap-4">
-                {['Oficial', 'Ajudante'].map((option) => (
-                  <button
-                    key={option}
-                    onClick={() => setRole(option as any)}
-                    className={cn(
-                      "flex-1 py-3 rounded-xl border font-bold transition-all active:scale-95 uppercase tracking-widest text-xs",
-                      role === option 
-                        ? theme === 'dark' ? "bg-[#D4AF37] border-[#D4AF37] text-white shadow-[#D4AF37]/30" : "bg-[#2563EB] border-[#2563EB] text-white shadow-[#2563EB]/30"
-                        : theme === 'dark' 
-                          ? "bg-black border-white/10 text-white/40 hover:border-white/20"
-                          : "bg-slate-50 border-slate-200 text-slate-400 hover:border-slate-300"
-                    )}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            </div>
             <div className="space-y-2 md:col-span-2">
               <label className={cn(
                 "text-xs font-black flex items-center gap-2 uppercase tracking-widest",
@@ -1188,44 +1205,6 @@ export default function App() {
               </div>
             </div>
           </div>
-
-          {/* Stats Summary */}
-          <div className={cn(
-            "mt-6 pt-6 border-t flex items-center justify-between",
-            theme === 'dark' ? "border-white/5" : "border-slate-100"
-          )}>
-            <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-12 h-12 rounded-2xl flex items-center justify-center",
-                theme === 'dark' ? "bg-[#D4AF37]/10 text-[#D4AF37]" : "bg-[#2563EB]/10 text-[#2563EB]"
-              )}>
-                <Clock size={24} />
-              </div>
-              <div>
-                <p className={cn(
-                  "text-[10px] font-black uppercase tracking-[0.2em]",
-                  theme === 'dark' ? "text-white/40" : "text-slate-400"
-                )}>TOTAL DO MÊS</p>
-                <p className={cn(
-                  "text-2xl font-black",
-                  theme === 'dark' ? "text-white" : "text-slate-900"
-                )}>{totalHours} <span className={cn(
-                  "text-xs font-normal",
-                  theme === 'dark' ? "text-white/40" : "text-slate-400"
-                )}>horas</span></p>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className={cn(
-                "text-[10px] font-black uppercase tracking-[0.2em]",
-                theme === 'dark' ? "text-white/40" : "text-slate-400"
-              )}>VALOR A RECEBER</p>
-              <div className="flex items-center justify-end gap-1">
-                <DollarSign size={20} className="text-emerald-500" />
-                <p className="text-2xl font-black text-emerald-500">€ {totalEarnings.toFixed(2)}</p>
-              </div>
-            </div>
-          </div>
         </section>
 
         {/* Daily Entries */}
@@ -1240,7 +1219,7 @@ export default function App() {
                 onClick={() => {
                   if (confirm('Tem certeza que deseja limpar todos os dados deste mês?')) {
                     setEntries({});
-                    db.entries.where('monthKey').equals(monthKey).delete();
+                    void clearMonth(monthKey);
                   }
                 }}
                 className={cn(
@@ -1489,6 +1468,53 @@ export default function App() {
               </div>
 
               <div className="flex-grow overflow-y-auto p-6 space-y-8">
+                {employeeCode && (
+                  <section className="space-y-4">
+                    <div
+                      className={cn(
+                        'flex items-center gap-2',
+                        theme === 'dark' ? 'text-white/80' : 'text-slate-600',
+                      )}
+                    >
+                      <User size={20} className="text-blue-500" />
+                      <h3 className="font-black uppercase tracking-widest text-xs">
+                        CÓDIGO DO COLABORADOR
+                      </h3>
+                    </div>
+                    <div
+                      className={cn(
+                        'rounded-2xl border p-4 space-y-3',
+                        theme === 'dark'
+                          ? 'border-white/10 bg-[#141414]'
+                          : 'border-slate-200 bg-slate-50',
+                      )}
+                    >
+                      <p
+                        className={cn(
+                          'text-center font-mono text-2xl font-black tracking-widest',
+                          theme === 'dark' ? 'text-white' : 'text-slate-900',
+                        )}
+                      >
+                        {employeeCode}
+                      </p>
+                      {qrDataUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setQrLightboxOpen(true)}
+                          className={cn(
+                            'w-full py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all active:scale-95',
+                            theme === 'dark'
+                              ? 'bg-blue-600 text-white hover:bg-blue-500'
+                              : 'bg-[#2563EB] text-white hover:bg-blue-600',
+                          )}
+                        >
+                          Ver QR em ecrã inteiro
+                        </button>
+                      )}
+                    </div>
+                  </section>
+                )}
+
                 {/* Hourly Rate Section */}
                 <section className="space-y-4">
                   <div className={cn(
@@ -1522,24 +1548,6 @@ export default function App() {
                         )}
                       />
                     </div>
-                    <p className={cn(
-                      "text-[10px] uppercase tracking-widest font-bold pt-2",
-                      theme === 'dark' ? "text-white/40" : "text-slate-400"
-                    )}>META DE HORAS NO MÊS (PAINEL)</p>
-                    <input 
-                      type="number" 
-                      min={1}
-                      max={744}
-                      value={monthlyHourGoal || ''}
-                      onChange={(e) => setMonthlyHourGoal(Math.max(1, parseInt(e.target.value, 10) || 160))}
-                      placeholder="160"
-                      className={cn(
-                        "w-full px-4 py-3 border rounded-xl focus:ring-2 outline-none font-black",
-                        theme === 'dark' 
-                          ? "bg-[#1f1f1f] border-white/10 text-white focus:ring-[#D4AF37]" 
-                          : "bg-white border-slate-200 text-slate-900 focus:ring-[#2563EB]"
-                      )}
-                    />
                   </div>
                 </section>
 
@@ -1770,39 +1778,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Hidden PDF Template */}
-      <PDFTemplate data={workMonthData} innerRef={pdfRef} />
-
-      {/* Floating Action Buttons for Mobile */}
-      <div className="fixed bottom-6 right-6 sm:hidden z-40 flex flex-col gap-4">
-        <button 
-          onClick={shareToWhatsApp}
-          disabled={isExporting}
-          className="w-14 h-14 bg-[#25D366] text-white rounded-full shadow-[0_0_20px_rgba(37,211,102,0.5)] flex items-center justify-center active:scale-90 transition-all disabled:opacity-50"
-          title="Compartilhar no WhatsApp"
-        >
-          {isExporting ? (
-            <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          ) : (
-            <MessageCircle size={24} />
-          )}
-        </button>
-        <button 
-          onClick={exportPDF}
-          disabled={isExporting}
-          className={cn(
-            "w-14 h-14 text-white rounded-full flex items-center justify-center active:scale-90 transition-all disabled:opacity-50",
-            theme === 'dark' ? "bg-[#D4AF37] shadow-[#D4AF37]/50" : "bg-[#2563EB] shadow-[#2563EB]/50"
-          )}
-          title="Gerar PDF"
-        >
-          {isExporting ? (
-            <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          ) : (
-            <Download size={24} />
-          )}
-        </button>
-      </div>
       <datalist id="project-options">
         <option value="San Carlos Can Brisa" />
       </datalist>

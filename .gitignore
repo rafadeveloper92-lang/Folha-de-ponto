@@ -1,4 +1,6 @@
 node_modules/
+# Gerado no postinstall a partir de sql.js
+public/assets/sql-wasm.wasm
 build/
 dist/
 coverage/

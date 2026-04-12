@@ -2,19 +2,28 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# GSI Tracker — Ponto Digital
 
-This contains everything you need to run your app locally.
+App web (Vite + React) pensado para uso **offline** no dispositivo (PWA / Capacitor).
 
-View your app in AI Studio: https://ai.studio/apps/6480145e-89c3-4161-95bc-730f3220889e
+## Rodar localmente
 
-## Run Locally
+**Pré-requisito:** Node.js
 
-**Prerequisites:**  Node.js
+1. `npm install`
+2. `npm run dev`
 
+Para gerar o APK Android após alterar o front-end: `npm run android:build` (requer Android SDK local) ou use o workflow no GitHub Actions.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Dados no dispositivo
+
+- **No APK Android**: os registros e o perfil são guardados em **SQLite** no armazenamento privado da app (plugin `@capacitor-community/sqlite`). Na primeira abertura após esta atualização, dados antigos no **IndexedDB (Dexie)** são migrados automaticamente para SQLite.
+- **No navegador (PWA / `npm run dev`)**: continua a usar **IndexedDB** via Dexie — mesmo padrão de “só no teu dispositivo”, sem servidor.
+
+Ícones da PWA estão em `public/icon-192.png` e `public/icon-512.png` (gerados por `python3 scripts/generate-icons.py` se precisar de os recriar).
+
+O **PDF do ponto** é gerado **no telemóvel** com `jsPDF` (texto e tabela), sem servidor e **sem API Gemini**. No Android, a partilha usa os plugins `@capacitor/filesystem` e `@capacitor/share` para enviar o ficheiro real às apps (WhatsApp, etc.).
+
+Interface com **abas** (Painel, Análises, Projeto, Relatório, Gestão), gráficos (**Recharts**: donut, radar, barras, heatmap), foto de perfil opcional (guardada em base64 no perfil) e tema escuro tipo dashboard GSI (alternar sol/lua para claro).
+
+Ao abrir o app, uma **intro animada** (logo G + “GSI Tracker”) com jingle curto em Web Audio (~2,4 s).

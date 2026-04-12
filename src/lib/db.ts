@@ -18,8 +18,18 @@ interface UserProfile {
   signature: string;
   theme?: 'dark' | 'light';
   defaultProject?: string;
-  /** Meta de horas no mês (ex.: 160) para o gráfico do painel */
-  monthlyHourGoal?: number;
+  /** Data URL (JPEG/PNG) — foto de perfil */
+  profilePhoto?: string;
+  /** Cadastro inicial concluído */
+  onboardingComplete?: boolean;
+  /** Cargo bloqueado após cadastro */
+  roleLocked?: boolean;
+  /** PDF da ficha (base64) — obrigatório no onboarding */
+  employeePdfBase64?: string;
+  /** Código extraído do PDF (ex.: GF127855) */
+  employeeCode?: string;
+  /** Data URL PNG do QR mostrado ao lado da foto */
+  qrDataUrl?: string;
 }
 
 const db = new Dexie('GSITrackerDB') as Dexie & {
@@ -28,6 +38,10 @@ const db = new Dexie('GSITrackerDB') as Dexie & {
 };
 
 db.version(1).stores({
+  entries: '++id, monthKey, day',
+  profile: 'id',
+});
+db.version(2).stores({
   entries: '++id, monthKey, day',
   profile: 'id',
 });
