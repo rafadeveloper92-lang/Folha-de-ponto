@@ -4,9 +4,17 @@ import { Camera, FileUp, Loader2, User } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { fileToCompressedDataUrl } from '../lib/profilePhoto';
 import { extractEmployeeCodeFromPdf } from '../lib/extractEmployeeCodeFromPdf';
-import { extractQrFromPdf } from '../lib/extractQrFromPdf';
+import { extractQrFromPdf, isLikelyIos } from '../lib/extractQrFromPdf';
+import { qrDataUrlFromPayload } from '../lib/qrPlaceholder';
 
 /** Tenta obter código GF… a partir do texto do QR ou do URL. */
+function normalizeManualCode(raw: string): string | null {
+  const s = raw.trim().toUpperCase().replace(/\s/g, '');
+  if (/^GF\d{4,}$/.test(s)) return s;
+  if (/^[A-Z]{2}\d{6,}$/.test(s)) return s;
+  return null;
+}
+
 function codeFromQrPayload(payload: string): string | null {
   const trimmed = payload.trim();
   const direct = trimmed.match(/\b(GF\d{4,})\b/i);
@@ -54,6 +62,7 @@ export function OnboardingModal({ onComplete }: Props) {
   const [photo, setPhoto] = useState<string | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfError, setPdfError] = useState('');
+  const [manualEmployeeCode, setManualEmployeeCode] = useState('');
   const [busy, setBusy] = useState(false);
   const photoRef = useRef<HTMLInputElement>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
@@ -70,23 +79,52 @@ export function OnboardingModal({ onComplete }: Props) {
     setBusy(true);
     setPdfError('');
     try {
-      const qrFromDoc = await extractQrFromPdf(pdfFile);
+      let qrFromDoc: {payload: string; qrImageDataUrl: string} | null = null;
+      try {
+        qrFromDoc = await extractQrFromPdf(pdfFile);
+      } catch (err) {
+        console.warn('extractQrFromPdf', err);
+        /* iOS Safari pode falhar por memória — tentar código manual */
+      }
+
+      const manualNorm = normalizeManualCode(manualEmployeeCode);
+      if (!qrFromDoc && manualNorm) {
+        try {
+          const qrImageDataUrl = await qrDataUrlFromPayload(manualNorm);
+          qrFromDoc = {payload: manualNorm, qrImageDataUrl};
+        } catch (e) {
+          console.error(e);
+          setPdfError(
+            'Não foi possível gerar o QR online. Verifique a internet ou tente noutro dispositivo.',
+          );
+          setBusy(false);
+          return;
+        }
+      }
+
       if (!qrFromDoc) {
         setPdfError(
-          'Não foi possível ler o QR neste PDF. Tente: ficheiro original (não foto), zoom 100% ao guardar, ou outro leitor. O QR deve estar nítido e não cortado.',
+          isLikelyIos()
+            ? 'No iPhone o PDF por vezes não é lido. Escreva abaixo o código da ficha (ex. GF123456) — o mesmo que aparece no papel — e tente de novo.'
+            : 'Não foi possível ler o QR neste PDF. Use o ficheiro original, ou escreva o código GF manualmente no campo abaixo.',
         );
         setBusy(false);
         return;
       }
+
       let code =
         (await extractEmployeeCodeFromPdf(pdfFile)) ??
-        codeFromQrPayload(qrFromDoc.payload);
+        codeFromQrPayload(qrFromDoc.payload) ??
+        manualNorm;
       if (!code) {
         setPdfError(
-          'Código do colaborador não encontrado. Confirme que o PDF é a ficha GSI completa.',
+          'Código do colaborador não encontrado no PDF. Escreva o código GF no campo “Código manual (iPhone)”.',
         );
         setBusy(false);
         return;
+      }
+      if (manualNorm && manualNorm !== code && /^GF\d/.test(manualNorm)) {
+        code = manualNorm;
       }
       const pdfB64 = await fileToBase64(pdfFile);
       await onComplete({
@@ -96,12 +134,11 @@ export function OnboardingModal({ onComplete }: Props) {
         profilePhoto: photo,
         employeePdfBase64: pdfB64,
         employeeCode: code,
-        /** Imagem do QR recortada do PDF — o mesmo que o encarregado escaneia no papel. */
         qrDataUrl: qrFromDoc.qrImageDataUrl,
       });
     } catch (e) {
       console.error(e);
-      setPdfError('Erro ao processar o PDF. Tente outro ficheiro.');
+      setPdfError('Erro ao processar o PDF. Tente outro ficheiro ou o código manual no iPhone.');
     } finally {
       setBusy(false);
     }
@@ -233,6 +270,25 @@ export function OnboardingModal({ onComplete }: Props) {
             {pdfError && (
               <p className="mt-2 text-xs text-red-400">{pdfError}</p>
             )}
+            <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+              <label className="mb-1 block text-[10px] font-black uppercase tracking-wider text-amber-200/90">
+                Código manual (iPhone / QR não lido)
+              </label>
+              <p className="mb-2 text-[10px] leading-relaxed text-slate-400">
+                Se o telemóvel não ler o QR do PDF (comum no Safari iOS), escreva aqui o código da
+                ficha, ex. <span className="font-mono text-slate-300">GF123456</span>. O PDF continua
+                obrigatório; será criada uma imagem de QR para o seu perfil.
+              </p>
+              <input
+                type="text"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                value={manualEmployeeCode}
+                onChange={(e) => setManualEmployeeCode(e.target.value)}
+                placeholder="ex: GF123456"
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-sm uppercase text-slate-100 placeholder:text-slate-600"
+              />
+            </div>
           </div>
         </div>
 

@@ -1,5 +1,13 @@
 import jsQR from 'jsqr';
 
+/** Safari iOS tem limite de memória em canvas — evitar renders gigantes e muitas variantes. */
+export function isLikelyIos(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const iOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && (navigator as Navigator & {maxTouchPoints?: number}).maxTouchPoints! > 1);
+  return iOS;
+}
+
 type QrResult = {
   /** Conteúdo lido do QR (mesmo que no PDF) */
   payload: string;
@@ -88,6 +96,7 @@ function decodeQrFromImageData(
 
 function decodeQrFromCanvas(
   canvas: HTMLCanvasElement,
+  lightMode: boolean,
 ): { payload: string; location: JsLocation } | null {
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
@@ -96,10 +105,12 @@ function decodeQrFromCanvas(
   const variants: {data: Uint8ClampedArray; w: number; h: number; ox: number; oy: number}[] =
     [];
 
+  const thresholds = lightMode ? [120, 140] : [100, 120, 140, 160, 180];
+
   const pushFull = (c: HTMLCanvasElement, ox: number, oy: number) => {
     const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height);
     variants.push({data: d.data, w: c.width, h: c.height, ox, oy});
-    for (const th of [100, 120, 140, 160, 180]) {
+    for (const th of thresholds) {
       variants.push({
         data: binarizeRgba(d.data, th, false),
         w: c.width,
@@ -118,9 +129,14 @@ function decodeQrFromCanvas(
   };
 
   pushFull(canvas, 0, 0);
-  for (const f of [2, 3] as const) {
-    const up = upscaleCanvasNearest(canvas, f);
-    pushFull(up, 0, 0);
+  if (!lightMode) {
+    for (const f of [2, 3] as const) {
+      const up = upscaleCanvasNearest(canvas, f);
+      pushFull(up, 0, 0);
+    }
+  } else {
+    const up2 = upscaleCanvasNearest(canvas, 2);
+    pushFull(up2, 0, 0);
   }
 
   for (const v of variants) {
@@ -128,7 +144,7 @@ function decodeQrFromCanvas(
     if (hit) return hit;
   }
 
-  const grid = 3;
+  const grid = lightMode ? 2 : 3;
   for (let gy = 0; gy < grid; gy++) {
     for (let gx = 0; gx < grid; gx++) {
       const x = Math.floor((gx * W) / grid);
@@ -201,7 +217,10 @@ function cropQrHighRes(
   source: HTMLCanvasElement,
   location: QrQuad,
   padFactor = 0.08,
+  opts?: {minExport?: number; maxIntegerScale?: number},
 ): string {
+  const minExport = opts?.minExport ?? 420;
+  const maxIntegerScale = opts?.maxIntegerScale ?? 8;
   const xs = [
     location.topLeftCorner.x,
     location.topRightCorner.x,
@@ -231,11 +250,10 @@ function cropQrHighRes(
   cw = Math.max(1, cw);
   ch = Math.max(1, ch);
 
-  const minExport = 420;
   const shortSide = Math.min(cw, ch);
   const integerScale = Math.max(
     1,
-    Math.min(8, Math.ceil(minExport / shortSide)),
+    Math.min(maxIntegerScale, Math.ceil(minExport / shortSide)),
   );
 
   const out = document.createElement('canvas');
@@ -263,6 +281,7 @@ function cropQrHighRes(
  * (re-render da página com zoom maior + upscaling por vizinho mais próximo).
  */
 export async function extractQrFromPdf(file: File): Promise<QrResult | null> {
+  const ios = isLikelyIos();
   const buf = await file.arrayBuffer();
   const pdfjs = await import('pdfjs-dist');
   pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -271,9 +290,12 @@ export async function extractQrFromPdf(file: File): Promise<QrResult | null> {
   ).toString();
 
   const pdf = await pdfjs.getDocument({ data: buf }).promise;
-  /** Escalas crescentes — QRs pequenos ou PDFs com artefactos precisam de mais pixels. */
-  const findScales = [1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6];
-  const maxPagesScan = Math.min(pdf.numPages, 8);
+  /** iOS: menos escalas e páginas para não rebentar o limite de canvas (~16MP). */
+  const findScales = ios
+    ? [1.5, 2, 2.5, 3, 3.5, 4, 4.5]
+    : [1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6];
+  const maxPagesScan = Math.min(pdf.numPages, ios ? 3 : 8);
+  const maxCanvasSide = ios ? 2048 : 4096;
 
   let foundPage = 0;
   let foundScale = 2;
@@ -283,23 +305,33 @@ export async function extractQrFromPdf(file: File): Promise<QrResult | null> {
     const page = await pdf.getPage(pi);
     for (const scale of findScales) {
       const viewport = page.getViewport({ scale });
+      let w = Math.floor(viewport.width);
+      let h = Math.floor(viewport.height);
+      if (Math.max(w, h) > maxCanvasSide) {
+        const r = maxCanvasSide / Math.max(w, h);
+        w = Math.floor(w * r);
+        h = Math.floor(h * r);
+      }
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) continue;
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
+      canvas.width = w;
+      canvas.height = h;
+      const scaleDown = w / viewport.width;
+      const renderVp =
+        scaleDown < 0.999 ? page.getViewport({scale: scale * scaleDown}) : viewport;
       await page
         .render({
           canvas,
-          viewport,
+          viewport: renderVp,
           annotationMode: 0,
         })
         .promise;
 
-      const hit = decodeQrFromCanvas(canvas);
+      const hit = decodeQrFromCanvas(canvas, ios);
       if (hit) {
         foundPage = pi;
-        foundScale = scale;
+        foundScale = scale * scaleDown;
         decoded = hit;
         break outer;
       }
@@ -310,9 +342,11 @@ export async function extractQrFromPdf(file: File): Promise<QrResult | null> {
 
   /** Segundo: mesma página com escala alta para recorte nítido. */
   const page = await pdf.getPage(foundPage);
-  let exportScale = Math.min(6, Math.max(4.2, foundScale * 1.85));
+  let exportScale = ios
+    ? Math.min(4.5, Math.max(3, foundScale * 1.6))
+    : Math.min(6, Math.max(4.2, foundScale * 1.85));
   const vpTry = page.getViewport({ scale: exportScale });
-  const maxSide = 4096;
+  const maxSide = ios ? 2048 : 4096;
   if (vpTry.width > maxSide || vpTry.height > maxSide) {
     exportScale *= maxSide / Math.max(vpTry.width, vpTry.height);
   }
@@ -352,6 +386,9 @@ export async function extractQrFromPdf(file: File): Promise<QrResult | null> {
 
   return {
     payload: decoded.payload,
-    qrImageDataUrl: cropQrHighRes(hi, locHi),
+    qrImageDataUrl: cropQrHighRes(hi, locHi, 0.08, {
+      minExport: ios ? 300 : 420,
+      maxIntegerScale: ios ? 5 : 8,
+    }),
   };
 }
