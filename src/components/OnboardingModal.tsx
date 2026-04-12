@@ -73,7 +73,7 @@ export function OnboardingModal({ onComplete }: Props) {
       const qrFromDoc = await extractQrFromPdf(pdfFile);
       if (!qrFromDoc) {
         setPdfError(
-          'Não foi possível ler o QR na ficha. Use o PDF original GSI com o QR visível.',
+          'Não foi possível ler o QR neste PDF. Tente: ficheiro original (não foto), zoom 100% ao guardar, ou outro leitor. O QR deve estar nítido e não cortado.',
         );
         setBusy(false);
         return;
