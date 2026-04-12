@@ -1,6 +1,13 @@
 import {Capacitor} from '@capacitor/core';
 import {CapacitorSQLite, SQLiteConnection, type SQLiteDBConnection} from '@capacitor-community/sqlite';
-import {db, type InAppMessage, type UserProfile, type WorkEntry} from './db';
+import {
+  db,
+  type InAppMessage,
+  type Supervisor,
+  type SupportTicket,
+  type UserProfile,
+  type WorkEntry,
+} from './db';
 
 const DB_NAME = 'gsi_tracker';
 
@@ -43,6 +50,23 @@ CREATE TABLE IF NOT EXISTS app_messages (
   created_at INTEGER NOT NULL,
   read INTEGER NOT NULL DEFAULT 0,
   source TEXT
+);
+CREATE TABLE IF NOT EXISTS supervisors (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  photo_data_url TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS support_tickets (
+  id TEXT PRIMARY KEY NOT NULL,
+  supervisor_id TEXT,
+  message TEXT NOT NULL,
+  user_name TEXT NOT NULL,
+  user_employee_code TEXT,
+  user_workplace TEXT,
+  created_at INTEGER NOT NULL,
+  read_by_admin INTEGER NOT NULL DEFAULT 0
 );
 `;
 
@@ -115,6 +139,39 @@ async function migrateFromDexieIfNeeded(): Promise<void> {
   } catch {
     /* tabela app_messages pode não existir em Dexie antigo */
   }
+  try {
+    const sups = await db.supervisors.toArray();
+    for (const s of sups) {
+      await sqlConn.run(
+        `INSERT OR REPLACE INTO supervisors (id, name, photo_data_url, sort_order, created_at) VALUES (?,?,?,?,?)`,
+        [s.id, s.name, s.photoDataUrl, s.sortOrder, s.createdAt],
+      );
+    }
+    if (sups.length) await db.supervisors.clear();
+  } catch {
+    /* Dexie sem tabela */
+  }
+  try {
+    const tix = await db.supportTickets.toArray();
+    for (const t of tix) {
+      await sqlConn.run(
+        `INSERT OR REPLACE INTO support_tickets (id, supervisor_id, message, user_name, user_employee_code, user_workplace, created_at, read_by_admin) VALUES (?,?,?,?,?,?,?,?)`,
+        [
+          t.id,
+          t.supervisorId ?? null,
+          t.message,
+          t.userName,
+          t.userEmployeeCode ?? null,
+          t.userWorkplace ?? null,
+          t.createdAt,
+          t.readByAdmin ? 1 : 0,
+        ],
+      );
+    }
+    if (tix.length) await db.supportTickets.clear();
+  } catch {
+    /* Dexie sem tabela */
+  }
   await db.entries.clear();
   await db.profile.clear();
   try {
@@ -158,7 +215,53 @@ async function openSqlite(): Promise<void> {
   }
   await migrateFromDexieIfNeeded();
   await migrateMessagesFromDexieIfNeeded();
+  await migrateSupervisorsTicketsFromDexieIfNeeded();
   useNativeSqlite = true;
+}
+
+async function migrateSupervisorsTicketsFromDexieIfNeeded(): Promise<void> {
+  if (!sqlConn) return;
+  const r1 = await sqlConn.query('SELECT COUNT(*) AS c FROM supervisors', []);
+  const c1 = Number((r1.values?.[0] as Record<string, unknown> | undefined)?.c ?? 0);
+  if (c1 === 0) {
+    try {
+      const fromDexie = await db.supervisors.toArray();
+      for (const s of fromDexie) {
+        await sqlConn.run(
+          `INSERT OR REPLACE INTO supervisors (id, name, photo_data_url, sort_order, created_at) VALUES (?,?,?,?,?)`,
+          [s.id, s.name, s.photoDataUrl, s.sortOrder, s.createdAt],
+        );
+      }
+      if (fromDexie.length) await db.supervisors.clear();
+    } catch {
+      /* ignore */
+    }
+  }
+  const r2 = await sqlConn.query('SELECT COUNT(*) AS c FROM support_tickets', []);
+  const c2 = Number((r2.values?.[0] as Record<string, unknown> | undefined)?.c ?? 0);
+  if (c2 === 0) {
+    try {
+      const fromDexie = await db.supportTickets.toArray();
+      for (const t of fromDexie) {
+        await sqlConn.run(
+          `INSERT OR REPLACE INTO support_tickets (id, supervisor_id, message, user_name, user_employee_code, user_workplace, created_at, read_by_admin) VALUES (?,?,?,?,?,?,?,?)`,
+          [
+            t.id,
+            t.supervisorId ?? null,
+            t.message,
+            t.userName,
+            t.userEmployeeCode ?? null,
+            t.userWorkplace ?? null,
+            t.createdAt,
+            t.readByAdmin ? 1 : 0,
+          ],
+        );
+      }
+      if (fromDexie.length) await db.supportTickets.clear();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 async function migrateMessagesFromDexieIfNeeded(): Promise<void> {
@@ -337,22 +440,30 @@ export async function clearAllData(): Promise<void> {
     await sqlConn.execute('DELETE FROM entries;', true);
     await sqlConn.execute('DELETE FROM profile;', true);
     await sqlConn.execute('DELETE FROM app_messages;', true);
+    await sqlConn.execute('DELETE FROM supervisors;', true);
+    await sqlConn.execute('DELETE FROM support_tickets;', true);
     return;
   }
   await db.profile.clear();
   await db.entries.clear();
   await db.appMessages.clear();
+  await db.supervisors.clear();
+  await db.supportTickets.clear();
 }
 
 export async function restoreData(
   profile: UserProfile | undefined,
   entries: WorkEntry[],
   messages?: InAppMessage[],
+  supervisors?: Supervisor[],
+  supportTickets?: SupportTicket[],
 ): Promise<void> {
   if (useNativeSqlite && sqlConn) {
     await sqlConn.execute('DELETE FROM entries;', true);
     await sqlConn.execute('DELETE FROM profile;', true);
     await sqlConn.execute('DELETE FROM app_messages;', true);
+    await sqlConn.execute('DELETE FROM supervisors;', true);
+    await sqlConn.execute('DELETE FROM support_tickets;', true);
     if (profile) {
       await sqlConn.run(
         `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo,
@@ -396,14 +507,43 @@ export async function restoreData(
         );
       }
     }
+    if (supervisors?.length) {
+      for (const s of supervisors) {
+        await sqlConn.run(
+          `INSERT OR REPLACE INTO supervisors (id, name, photo_data_url, sort_order, created_at) VALUES (?,?,?,?,?)`,
+          [s.id, s.name, s.photoDataUrl, s.sortOrder, s.createdAt],
+        );
+      }
+    }
+    if (supportTickets?.length) {
+      for (const t of supportTickets) {
+        await sqlConn.run(
+          `INSERT OR REPLACE INTO support_tickets (id, supervisor_id, message, user_name, user_employee_code, user_workplace, created_at, read_by_admin) VALUES (?,?,?,?,?,?,?,?)`,
+          [
+            t.id,
+            t.supervisorId ?? null,
+            t.message,
+            t.userName,
+            t.userEmployeeCode ?? null,
+            t.userWorkplace ?? null,
+            t.createdAt,
+            t.readByAdmin ? 1 : 0,
+          ],
+        );
+      }
+    }
     return;
   }
   await db.profile.clear();
   await db.entries.clear();
   await db.appMessages.clear();
+  await db.supervisors.clear();
+  await db.supportTickets.clear();
   if (profile) await db.profile.put(profile);
   if (entries.length) await db.entries.bulkAdd(entries);
   if (messages?.length) await db.appMessages.bulkPut(messages);
+  if (supervisors?.length) await db.supervisors.bulkPut(supervisors);
+  if (supportTickets?.length) await db.supportTickets.bulkPut(supportTickets);
 }
 
 function mapMessageRow(row: Record<string, unknown>): InAppMessage {
@@ -485,4 +625,129 @@ export async function upsertMessages(rows: InAppMessage[]): Promise<void> {
   for (const m of rows) {
     await saveMessage(m);
   }
+}
+
+function mapSupervisorRow(row: Record<string, unknown>): Supervisor {
+  return {
+    id: String(row.id ?? ''),
+    name: String(row.name ?? ''),
+    photoDataUrl: String(row.photo_data_url ?? row.photoDataUrl ?? ''),
+    sortOrder: Number(row.sort_order ?? row.sortOrder ?? 0),
+    createdAt: Number(row.created_at ?? row.createdAt ?? 0),
+  };
+}
+
+function mapTicketRow(row: Record<string, unknown>): SupportTicket {
+  return {
+    id: String(row.id ?? ''),
+    supervisorId:
+      row.supervisor_id != null && String(row.supervisor_id).length > 0
+        ? String(row.supervisor_id)
+        : row.supervisorId != null && String(row.supervisorId).length > 0
+          ? String(row.supervisorId)
+          : undefined,
+    message: String(row.message ?? ''),
+    userName: String(row.user_name ?? row.userName ?? ''),
+    userEmployeeCode:
+      row.user_employee_code != null
+        ? String(row.user_employee_code)
+        : row.userEmployeeCode != null
+          ? String(row.userEmployeeCode)
+          : undefined,
+    userWorkplace:
+      row.user_workplace != null
+        ? String(row.user_workplace)
+        : row.userWorkplace != null
+          ? String(row.userWorkplace)
+          : undefined,
+    createdAt: Number(row.created_at ?? row.createdAt ?? 0),
+    readByAdmin: Boolean(row.read_by_admin === 1 || row.readByAdmin === true),
+  };
+}
+
+export async function loadAllSupervisors(): Promise<Supervisor[]> {
+  if (useNativeSqlite && sqlConn) {
+    const res = await sqlConn.query(
+      'SELECT id, name, photo_data_url, sort_order, created_at FROM supervisors ORDER BY sort_order ASC, created_at ASC',
+      [],
+    );
+    return ((res.values ?? []) as Record<string, unknown>[]).map(mapSupervisorRow);
+  }
+  return db.supervisors.orderBy('sortOrder').toArray();
+}
+
+export async function saveSupervisor(s: Supervisor): Promise<void> {
+  if (useNativeSqlite && sqlConn) {
+    await sqlConn.run(
+      `INSERT OR REPLACE INTO supervisors (id, name, photo_data_url, sort_order, created_at) VALUES (?,?,?,?,?)`,
+      [s.id, s.name, s.photoDataUrl, s.sortOrder, s.createdAt],
+    );
+    return;
+  }
+  await db.supervisors.put(s);
+}
+
+export async function deleteSupervisor(id: string): Promise<void> {
+  if (useNativeSqlite && sqlConn) {
+    await sqlConn.run('DELETE FROM supervisors WHERE id = ?', [id]);
+    return;
+  }
+  await db.supervisors.delete(id);
+}
+
+export async function loadAllSupportTickets(): Promise<SupportTicket[]> {
+  if (useNativeSqlite && sqlConn) {
+    const res = await sqlConn.query(
+      `SELECT id, supervisor_id, message, user_name, user_employee_code, user_workplace, created_at, read_by_admin
+       FROM support_tickets ORDER BY created_at DESC`,
+      [],
+    );
+    return ((res.values ?? []) as Record<string, unknown>[]).map(mapTicketRow);
+  }
+  return db.supportTickets.orderBy('createdAt').reverse().toArray();
+}
+
+export async function saveSupportTicket(t: SupportTicket): Promise<void> {
+  if (useNativeSqlite && sqlConn) {
+    await sqlConn.run(
+      `INSERT OR REPLACE INTO support_tickets (id, supervisor_id, message, user_name, user_employee_code, user_workplace, created_at, read_by_admin) VALUES (?,?,?,?,?,?,?,?)`,
+      [
+        t.id,
+        t.supervisorId ?? null,
+        t.message,
+        t.userName,
+        t.userEmployeeCode ?? null,
+        t.userWorkplace ?? null,
+        t.createdAt,
+        t.readByAdmin ? 1 : 0,
+      ],
+    );
+    return;
+  }
+  await db.supportTickets.put(t);
+}
+
+export async function markSupportTicketRead(id: string, read: boolean): Promise<void> {
+  if (useNativeSqlite && sqlConn) {
+    await sqlConn.run('UPDATE support_tickets SET read_by_admin = ? WHERE id = ?', [
+      read ? 1 : 0,
+      id,
+    ]);
+    return;
+  }
+  const row = await db.supportTickets.get(id);
+  if (row) await db.supportTickets.put({...row, readByAdmin: read});
+}
+
+export async function deleteSupportTicket(id: string): Promise<void> {
+  if (useNativeSqlite && sqlConn) {
+    await sqlConn.run('DELETE FROM support_tickets WHERE id = ?', [id]);
+    return;
+  }
+  await db.supportTickets.delete(id);
+}
+
+export async function countUnreadSupportTickets(): Promise<number> {
+  const all = await loadAllSupportTickets();
+  return all.filter((t) => !t.readByAdmin).length;
 }

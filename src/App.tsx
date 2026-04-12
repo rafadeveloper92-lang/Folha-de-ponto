@@ -31,6 +31,8 @@ import {
   Timer,
   Bell,
   Shirt,
+  Shield,
+  Users,
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -51,6 +53,9 @@ import {
   saveProfile,
   loadAllMessages,
   getMessage,
+  loadAllSupervisors,
+  loadAllSupportTickets,
+  countUnreadSupportTickets,
 } from './lib/storage';
 import { playShortBeep } from './lib/beep';
 import { buildGsiPdfBlob } from './lib/buildGsiPdf';
@@ -71,6 +76,10 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { GsiQrLightbox } from './components/GsiQrLightbox';
 import { MessagesInbox } from './components/MessagesInbox';
 import { SupplyRequestPanel } from './components/SupplyRequestPanel';
+import { AdminLoginModal } from './components/AdminLoginModal';
+import { AdminPanel } from './components/AdminPanel';
+import { SupervisorsContactPanel } from './components/SupervisorsContactPanel';
+import { isAdminSession } from './lib/adminAuth';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -90,7 +99,13 @@ export default function App() {
   const [defaultProject, setDefaultProject] = useState('');
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'analytics' | 'project' | 'report' | 'manage' | 'supplies'
+    | 'dashboard'
+    | 'analytics'
+    | 'project'
+    | 'report'
+    | 'manage'
+    | 'supplies'
+    | 'encarregados'
   >('dashboard');
   const [showSplash, setShowSplash] = useState(true);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
@@ -102,6 +117,9 @@ export default function App() {
   const [profileReady, setProfileReady] = useState(false);
   const [messagesInboxOpen, setMessagesInboxOpen] = useState(false);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [adminLoginOpen, setAdminLoginOpen] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [supportUnreadForAdmin, setSupportUnreadForAdmin] = useState(0);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const sigPad = useRef<SignatureCanvas>(null);
@@ -139,6 +157,19 @@ export default function App() {
   useEffect(() => {
     void refreshUnreadMessages();
   }, [profileReady, refreshUnreadMessages]);
+
+  const refreshAdminSupportBadge = useCallback(async () => {
+    if (!isAdminSession()) {
+      setSupportUnreadForAdmin(0);
+      return;
+    }
+    const n = await countUnreadSupportTickets();
+    setSupportUnreadForAdmin(n);
+  }, []);
+
+  useEffect(() => {
+    void refreshAdminSupportBadge();
+  }, [profileReady, adminPanelOpen, refreshAdminSupportBadge]);
 
   const ingestPushMessage = useCallback(async (raw: Partial<InAppMessage> & {id?: string}) => {
     const id = raw.id ?? `push-${Date.now()}`;
@@ -534,11 +565,15 @@ export default function App() {
     const profile = await loadProfile();
     const entries = await loadAllEntries();
     const messages = await loadAllMessages();
+    const supervisors = await loadAllSupervisors();
+    const supportTickets = await loadAllSupportTickets();
 
     const backupData = {
       profile,
       entries,
       messages,
+      supervisors,
+      supportTickets,
     };
     
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
@@ -561,7 +596,13 @@ export default function App() {
       try {
         const data = JSON.parse(e.target?.result as string);
         if (confirm('Isso irá substituir todos os seus dados atuais. Deseja continuar?')) {
-          await restoreData(data.profile, data.entries ?? [], data.messages);
+          await restoreData(
+            data.profile,
+            data.entries ?? [],
+            data.messages,
+            data.supervisors,
+            data.supportTickets,
+          );
           window.location.reload();
         }
       } catch (err) {
@@ -682,6 +723,7 @@ export default function App() {
     { id: 'analytics' as const, label: 'Análises', icon: LineChart },
     { id: 'project' as const, label: 'Projeto', icon: MapPin },
     { id: 'supplies' as const, label: 'Pedidos', icon: Shirt },
+    { id: 'encarregados' as const, label: 'Encarregados', icon: Users },
     { id: 'report' as const, label: 'Relatório', icon: FileText },
     { id: 'manage' as const, label: 'Gestão', icon: Table2 },
   ];
@@ -718,6 +760,23 @@ export default function App() {
         theme={theme}
         defaultSyncUrl={(import.meta.env.VITE_MESSAGES_JSON_URL as string | undefined)?.trim() ?? ''}
         onMessagesChanged={() => void refreshUnreadMessages()}
+      />
+
+      <AdminLoginModal
+        open={adminLoginOpen}
+        onClose={() => setAdminLoginOpen(false)}
+        theme={theme}
+        onSuccess={() => {
+          setAdminPanelOpen(true);
+          void refreshAdminSupportBadge();
+        }}
+      />
+
+      <AdminPanel
+        open={adminPanelOpen}
+        onClose={() => setAdminPanelOpen(false)}
+        theme={theme}
+        onDataChanged={() => void refreshAdminSupportBadge()}
       />
 
       {/* PWA Install Banner */}
@@ -840,6 +899,28 @@ export default function App() {
               {unreadMessageCount > 0 && (
                 <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
                   {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (isAdminSession()) setAdminPanelOpen(true);
+                else setAdminLoginOpen(true);
+              }}
+              className={cn(
+                'relative rounded-full p-2 transition-colors',
+                theme === 'dark'
+                  ? 'hover:bg-red-500/20 text-red-400'
+                  : 'hover:bg-red-50 text-red-600',
+              )}
+              title="Área administrativa"
+            >
+              <Shield size={22} />
+              {supportUnreadForAdmin > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-black text-black">
+                  {supportUnreadForAdmin > 9 ? '9+' : supportUnreadForAdmin}
                 </span>
               )}
             </button>
@@ -981,6 +1062,17 @@ export default function App() {
             workerName={name}
             employeeCode={employeeCode}
             defaultObra={defaultProject || ''}
+          />
+        )}
+
+        {activeTab === 'encarregados' && (
+          <SupervisorsContactPanel
+            theme={theme}
+            isDarkUi={isDarkUi}
+            userName={name}
+            userEmployeeCode={employeeCode}
+            userWorkplace={defaultProject || ''}
+            onTicketSent={() => void refreshAdminSupportBadge()}
           />
         )}
 

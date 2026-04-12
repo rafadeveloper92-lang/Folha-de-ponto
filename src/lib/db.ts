@@ -42,10 +42,33 @@ export interface InAppMessage {
   source?: 'sync' | 'push' | 'local';
 }
 
+/** Encarregado / administrador visível na app */
+export interface Supervisor {
+  id: string;
+  name: string;
+  photoDataUrl: string;
+  sortOrder: number;
+  createdAt: number;
+}
+
+/** Pedido de suporte enviado por um utilizador */
+export interface SupportTicket {
+  id: string;
+  supervisorId?: string;
+  message: string;
+  userName: string;
+  userEmployeeCode?: string;
+  userWorkplace?: string;
+  createdAt: number;
+  readByAdmin: boolean;
+}
+
 const db = new Dexie('GSITrackerDB') as Dexie & {
   entries: EntityTable<WorkEntry, 'id'>;
   profile: EntityTable<UserProfile, 'id'>;
   appMessages: EntityTable<InAppMessage, 'id'>;
+  supervisors: EntityTable<Supervisor, 'id'>;
+  supportTickets: EntityTable<SupportTicket, 'id'>;
 };
 
 db.version(1).stores({
@@ -60,6 +83,13 @@ db.version(3).stores({
   entries: '++id, monthKey, day',
   profile: 'id',
   appMessages: 'id, createdAt',
+});
+db.version(4).stores({
+  entries: '++id, monthKey, day',
+  profile: 'id',
+  appMessages: 'id, createdAt',
+  supervisors: 'id, sortOrder, createdAt',
+  supportTickets: 'id, supervisorId, createdAt, readByAdmin',
 });
 
 export type { WorkEntry, UserProfile };
