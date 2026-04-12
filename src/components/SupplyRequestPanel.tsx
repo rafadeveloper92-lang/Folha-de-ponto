@@ -145,7 +145,15 @@ export function SupplyRequestPanel({
 
     setSending(true);
     try {
-      await shareSupplyRequest(text, construction);
+      await shareSupplyRequest({
+        text,
+        name: workerName,
+        employeeCode: employeeCode ?? undefined,
+        obra: obra.trim() || defaultObra || '—',
+        construction,
+        clothing,
+        notes,
+      });
     } catch (e) {
       console.error(e);
       alert('Falha ao abrir partilha. Tente de novo.');
@@ -388,7 +396,7 @@ export function SupplyRequestPanel({
         ) : (
           <Send size={20} />
         )}
-        Enviar pedido (WhatsApp)
+        Gerar PDF e enviar (WhatsApp)
       </button>
       <p
         className={cn(
@@ -396,8 +404,9 @@ export function SupplyRequestPanel({
           isDarkUi ? 'text-slate-500' : 'text-slate-400',
         )}
       >
-        No telemóvel pode abrir o menu Partilhar — escolha WhatsApp. No PC abre chat web com o texto;
-        fotos podem precisar de envio separado.
+        É gerado um PDF com cabeçalho GSI, dados, roupa e fotos dos materiais. No telemóvel use
+        Partilhar → WhatsApp. No PC o PDF descarrega e abre o WhatsApp Web — anexe o ficheiro ao
+        chat.
       </p>
     </div>
   );

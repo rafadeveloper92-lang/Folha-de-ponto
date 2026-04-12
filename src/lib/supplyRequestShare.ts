@@ -1,21 +1,15 @@
 import {Capacitor} from '@capacitor/core';
 import {Directory, Filesystem} from '@capacitor/filesystem';
 import {Share} from '@capacitor/share';
+import {format} from 'date-fns';
+import {buildSupplyRequestPdfBlob} from './buildSupplyRequestPdf';
 
 const DEFAULT_WHATSAPP_E164 = '34641672023';
 
 export function getSuppliesWhatsAppE164(): string {
-  const raw = (import.meta.env.VITE_SUPPLIES_WHATSAPP as string | undefined)?.replace(/\D/g, '') ?? '';
+  const raw =
+    (import.meta.env.VITE_SUPPLIES_WHATSAPP as string | undefined)?.replace(/\D/g, '') ?? '';
   return raw.length >= 9 ? raw : DEFAULT_WHATSAPP_E164;
-}
-
-function dataUrlToBlob(dataUrl: string): Blob {
-  const [head, b64] = dataUrl.split(',');
-  const mime = head.match(/:(.*?);/)?.[1] ?? 'image/jpeg';
-  const bin = atob(b64 ?? '');
-  const u8 = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-  return new Blob([u8], {type: mime});
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -56,7 +50,7 @@ export function buildSupplyRequestText(params: {
     '',
   ];
   if (params.construction.length) {
-    lines.push('*Materiais de obra (ver fotos anexas):*');
+    lines.push('*Materiais (detalhe + fotos no PDF anexo):*');
     params.construction.forEach((c, i) => {
       lines.push(`${i + 1}. ${c.label}`);
     });
@@ -65,7 +59,7 @@ export function buildSupplyRequestText(params: {
   const c = params.clothing;
   const hasClothing = !!(c.calca || c.blusa || c.colete || c.sapato);
   if (hasClothing) {
-    lines.push('*Roupa (tamanhos EU):*');
+    lines.push('*Roupa (tamanhos EU — ver PDF):*');
     if (c.calca) lines.push(`• Calça: ${c.calca}`);
     if (c.blusa) lines.push(`• Blusa: ${c.blusa}`);
     if (c.colete) lines.push(`• Colete: ${c.colete}`);
@@ -77,68 +71,73 @@ export function buildSupplyRequestText(params: {
     lines.push(params.notes.trim());
     lines.push('');
   }
+  lines.push('_PDF com fotos dos materiais anexo._');
   lines.push('_Enviado pela app GSI Tracker_');
   lines.push('');
   lines.push(`📱 *Contacto materiais:* +34 641 67 20 23`);
   return lines.join('\n');
 }
 
-async function nativeShareWithFiles(
-  text: string,
-  files: {name: string; blob: Blob}[],
-): Promise<boolean> {
-  const uris: string[] = [];
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    const base64 = await blobToBase64(f.blob);
-    const path = `gsi_supply/${Date.now()}_${i}_${f.name.replace(/[^\w.\-]/g, '_')}`;
-    const {uri} = await Filesystem.writeFile({
-      path,
-      data: base64,
-      directory: Directory.Cache,
-      recursive: true,
-    });
-    uris.push(uri);
-  }
+async function nativeSharePdfAndText(pdfBlob: Blob, text: string, fileName: string): Promise<void> {
+  const base64 = await blobToBase64(pdfBlob);
+  const path = `gsi_supply/${Date.now()}_${fileName.replace(/[^\w.\-]/g, '_')}`;
+  const {uri} = await Filesystem.writeFile({
+    path,
+    data: base64,
+    directory: Directory.Cache,
+    recursive: true,
+  });
   await Share.share({
     title: 'Pedido materiais GSI',
     text,
-    files: uris,
+    files: [uri],
     dialogTitle: 'Enviar para WhatsApp',
   });
-  return true;
 }
 
+export type ShareSupplyRequestInput = {
+  /** Texto curto para WhatsApp (resumo + indicação do PDF) */
+  text: string;
+  name: string;
+  employeeCode?: string;
+  obra: string;
+  construction: ConstructionLine[];
+  clothing: ClothingSelection;
+  notes?: string;
+};
+
 /**
- * Abre partilha (ideal: WhatsApp) com texto + imagens. Fallback: só texto em wa.me.
+ * Gera PDF com layout (dados, roupa, fotos) e partilha (WhatsApp).
  */
-export async function shareSupplyRequest(
-  text: string,
-  construction: ConstructionLine[],
-): Promise<void> {
-  const fileBlobs = construction.map((c, i) => ({
-    name: `material_${i + 1}_${c.label.slice(0, 20).replace(/\s+/g, '_')}.jpg`,
-    blob: dataUrlToBlob(c.photoDataUrl),
-  }));
+export async function shareSupplyRequest(input: ShareSupplyRequestInput): Promise<void> {
+  const pdfBlob = await buildSupplyRequestPdfBlob({
+    name: input.name,
+    employeeCode: input.employeeCode,
+    obra: input.obra,
+    construction: input.construction,
+    clothing: input.clothing,
+    notes: input.notes,
+  });
+
+  const safeName = (input.name || 'pedido').replace(/[^\w\s-]/g, '').slice(0, 24).trim() || 'pedido';
+  const fileName = `GSI_pedido_materiais_${safeName}_${format(new Date(), 'yyyy-MM-dd')}.pdf`;
 
   if (Capacitor.isNativePlatform()) {
     try {
-      await nativeShareWithFiles(text, fileBlobs);
+      await nativeSharePdfAndText(pdfBlob, input.text, fileName);
       return;
     } catch (e) {
-      console.warn('native multi-file share failed', e);
+      console.warn('native share PDF failed', e);
     }
   }
 
-  const imageFiles = fileBlobs.map(
-    (f) => new File([f.blob], f.name, {type: f.blob.type || 'image/jpeg'}),
-  );
+  const file = new File([pdfBlob], fileName, {type: 'application/pdf'});
 
   try {
-    if (navigator.share && imageFiles.length > 0) {
+    if (navigator.share) {
       const data: ShareData = {
-        text,
-        files: imageFiles,
+        text: input.text,
+        files: [file],
         title: 'Pedido GSI',
       };
       if (!navigator.canShare || navigator.canShare(data)) {
@@ -147,25 +146,29 @@ export async function shareSupplyRequest(
       }
     }
   } catch (e) {
-    console.warn('web share files failed', e);
+    console.warn('web share PDF failed', e);
   }
 
   try {
-    if (navigator.share && imageFiles.length === 0) {
-      await navigator.share({text, title: 'Pedido GSI'});
-      return;
-    }
+    const url = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
   } catch {
-    /* fall through */
+    /* ignore */
   }
 
   const phone = getSuppliesWhatsAppE164();
-  const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-  window.open(url, '_blank', 'noopener,noreferrer');
-
-  if (imageFiles.length > 0) {
-    alert(
-      'O WhatsApp abriu só com o texto. As fotos dos materiais não puderam ser anexadas automaticamente neste dispositivo. Use Partilhar novamente ou envie as fotos numa segunda mensagem.',
-    );
-  }
+  window.open(
+    `https://wa.me/${phone}?text=${encodeURIComponent(input.text)}`,
+    '_blank',
+    'noopener,noreferrer',
+  );
+  alert(
+    'O PDF foi descarregado. Anexe-o na conversa do WhatsApp que abriu (ícone de clipe 📎).',
+  );
 }
