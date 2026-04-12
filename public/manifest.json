@@ -2,7 +2,7 @@
   "name": "GSI Tracker - Ponto Digital",
   "short_name": "GSI Tracker",
   "description": "Sistema de registro de ponto digital para funcionários GSI.",
-  "start_url": "/",
+  "start_url": ".",
   "display": "standalone",
   "background_color": "#141414",
   "theme_color": "#E50914",
