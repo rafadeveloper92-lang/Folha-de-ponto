@@ -8,3 +8,14 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  const base = import.meta.env.BASE_URL;
+  const swUrl = `${base}sw.js`;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register(swUrl, {scope: base})
+      .then(() => console.log('SW registered'))
+      .catch((err) => console.log('SW registration failed', err));
+  });
+}

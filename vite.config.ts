@@ -5,7 +5,12 @@ import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
+  const repo =
+    process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'Folha-de-ponto';
+  const base =
+    process.env.GITHUB_PAGES === 'true' ? `/${repo}/` : '/';
   return {
+    base,
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),

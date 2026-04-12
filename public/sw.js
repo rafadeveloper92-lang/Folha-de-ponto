@@ -1,17 +1,9 @@
-const CACHE_NAME = 'gsi-tracker-v1';
-const ASSETS = [
-  '/',
-  '/index.html',
-  '/src/main.tsx',
-  '/src/App.tsx',
-  '/src/index.css'
-];
+const CACHE_NAME = 'gsi-tracker-v2';
+const PRECACHE = ['./', './index.html'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS);
-    })
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE))
   );
 });
 
