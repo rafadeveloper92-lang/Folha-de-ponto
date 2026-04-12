@@ -30,6 +30,7 @@ import {
   CheckCircle2,
   Timer,
   Bell,
+  Shirt,
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -69,6 +70,7 @@ import { playIntroSound } from './lib/introSound';
 import { OnboardingModal } from './components/OnboardingModal';
 import { GsiQrLightbox } from './components/GsiQrLightbox';
 import { MessagesInbox } from './components/MessagesInbox';
+import { SupplyRequestPanel } from './components/SupplyRequestPanel';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -88,7 +90,7 @@ export default function App() {
   const [defaultProject, setDefaultProject] = useState('');
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'analytics' | 'project' | 'report' | 'manage'
+    'dashboard' | 'analytics' | 'project' | 'report' | 'manage' | 'supplies'
   >('dashboard');
   const [showSplash, setShowSplash] = useState(true);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
@@ -679,6 +681,7 @@ export default function App() {
     { id: 'dashboard' as const, label: 'Painel', icon: LayoutDashboard },
     { id: 'analytics' as const, label: 'Análises', icon: LineChart },
     { id: 'project' as const, label: 'Projeto', icon: MapPin },
+    { id: 'supplies' as const, label: 'Pedidos', icon: Shirt },
     { id: 'report' as const, label: 'Relatório', icon: FileText },
     { id: 'manage' as const, label: 'Gestão', icon: Table2 },
   ];
@@ -969,6 +972,16 @@ export default function App() {
               ))}
             </div>
           </div>
+        )}
+
+        {activeTab === 'supplies' && (
+          <SupplyRequestPanel
+            theme={theme}
+            isDarkUi={isDarkUi}
+            workerName={name}
+            employeeCode={employeeCode}
+            defaultObra={defaultProject || ''}
+          />
         )}
 
         {activeTab === 'report' && (
