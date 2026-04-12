@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Download, 
@@ -29,13 +29,14 @@ import {
   Table2,
   CheckCircle2,
   Timer,
+  Bell,
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { WorkMonth, WorkDay } from './types';
 import { cn } from './lib/utils';
 import SignatureCanvas from 'react-signature-canvas';
-import type { UserProfile, WorkEntry } from './lib/db';
+import type { InAppMessage, UserProfile, WorkEntry } from './lib/db';
 import {
   clearMonth,
   deleteEntryDay,
@@ -45,7 +46,10 @@ import {
   loadProfile,
   replaceMonthEntries,
   restoreData,
+  saveMessage,
   saveProfile,
+  loadAllMessages,
+  getMessage,
 } from './lib/storage';
 import { playShortBeep } from './lib/beep';
 import { buildGsiPdfBlob } from './lib/buildGsiPdf';
@@ -64,6 +68,7 @@ import { SplashIntro } from './components/SplashIntro';
 import { playIntroSound } from './lib/introSound';
 import { OnboardingModal } from './components/OnboardingModal';
 import { GsiQrLightbox } from './components/GsiQrLightbox';
+import { MessagesInbox } from './components/MessagesInbox';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -93,6 +98,8 @@ export default function App() {
   const [qrLightboxOpen, setQrLightboxOpen] = useState(false);
   const [employeePdfBase64, setEmployeePdfBase64] = useState<string | null>(null);
   const [profileReady, setProfileReady] = useState(false);
+  const [messagesInboxOpen, setMessagesInboxOpen] = useState(false);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const sigPad = useRef<SignatureCanvas>(null);
@@ -121,6 +128,70 @@ export default function App() {
     window.addEventListener('beforeinstallprompt', handler);
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
+
+  const refreshUnreadMessages = useCallback(async () => {
+    const list = await loadAllMessages();
+    setUnreadMessageCount(list.filter((m) => !m.read).length);
+  }, []);
+
+  useEffect(() => {
+    void refreshUnreadMessages();
+  }, [profileReady, refreshUnreadMessages]);
+
+  const ingestPushMessage = useCallback(async (raw: Partial<InAppMessage> & {id?: string}) => {
+    const id = raw.id ?? `push-${Date.now()}`;
+    const existing = await getMessage(id);
+    const title =
+      (raw.title && String(raw.title).trim()) ||
+      existing?.title ||
+      'Notificação';
+    const body =
+      (raw.body && String(raw.body).trim()) || existing?.body || '';
+    const msg: InAppMessage = {
+      id,
+      title,
+      body,
+      createdAt: raw.createdAt ?? existing?.createdAt ?? Date.now(),
+      read: false,
+      source: 'push',
+    };
+    await saveMessage(msg);
+    await refreshUnreadMessages();
+  }, [refreshUnreadMessages]);
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMsg = (ev: MessageEvent) => {
+      const d = ev.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === 'PUSH_MESSAGE' && d.message) {
+        void ingestPushMessage(d.message as InAppMessage);
+      }
+      if (d.type === 'NOTIFICATION_CLICK') {
+        const nid = d.messageId as string | null | undefined;
+        const title = (d.title as string) ?? 'Notificação';
+        const body = (d.body as string) ?? '';
+        if (nid) {
+          void ingestPushMessage({id: String(nid), title, body, source: 'push'});
+        }
+        setMessagesInboxOpen(true);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', onMsg);
+    return () => navigator.serviceWorker.removeEventListener('message', onMsg);
+  }, [ingestPushMessage]);
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.startsWith('#msg=')) {
+      const id = decodeURIComponent(hash.slice(5));
+      if (id) {
+        setMessagesInboxOpen(true);
+        void ingestPushMessage({id, title: 'Notificação', body: ''});
+      }
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [ingestPushMessage]);
 
   // Load profile and entries (SQLite nativo no Android; Dexie no navegador)
   useEffect(() => {
@@ -460,10 +531,12 @@ export default function App() {
   const handleBackupData = async () => {
     const profile = await loadProfile();
     const entries = await loadAllEntries();
-    
+    const messages = await loadAllMessages();
+
     const backupData = {
       profile,
-      entries
+      entries,
+      messages,
     };
     
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
@@ -486,7 +559,7 @@ export default function App() {
       try {
         const data = JSON.parse(e.target?.result as string);
         if (confirm('Isso irá substituir todos os seus dados atuais. Deseja continuar?')) {
-          await restoreData(data.profile, data.entries ?? []);
+          await restoreData(data.profile, data.entries ?? [], data.messages);
           window.location.reload();
         }
       } catch (err) {
@@ -636,6 +709,14 @@ export default function App() {
         />
       )}
 
+      <MessagesInbox
+        open={messagesInboxOpen}
+        onClose={() => setMessagesInboxOpen(false)}
+        theme={theme}
+        defaultSyncUrl={(import.meta.env.VITE_MESSAGES_JSON_URL as string | undefined)?.trim() ?? ''}
+        onMessagesChanged={() => void refreshUnreadMessages()}
+      />
+
       {/* PWA Install Banner */}
       <AnimatePresence>
         {showInstallBanner && (
@@ -739,6 +820,25 @@ export default function App() {
                 <Download size={18} />
               )}
               <span className="hidden sm:inline">PDF</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMessagesInboxOpen(true)}
+              className={cn(
+                'relative rounded-full p-2 transition-colors',
+                theme === 'dark'
+                  ? 'hover:bg-white/10 text-white/80'
+                  : 'hover:bg-slate-100 text-slate-600',
+              )}
+              title="Mensagens e notificações"
+            >
+              <Bell size={22} />
+              {unreadMessageCount > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
+                  {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
+                </span>
+              )}
             </button>
 
             <button 

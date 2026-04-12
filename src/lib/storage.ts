@@ -1,6 +1,6 @@
 import {Capacitor} from '@capacitor/core';
 import {CapacitorSQLite, SQLiteConnection, type SQLiteDBConnection} from '@capacitor-community/sqlite';
-import {db, type UserProfile, type WorkEntry} from './db';
+import {db, type InAppMessage, type UserProfile, type WorkEntry} from './db';
 
 const DB_NAME = 'gsi_tracker';
 
@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS entries (
   UNIQUE(month_key, day)
 );
 CREATE INDEX IF NOT EXISTS idx_entries_month ON entries(month_key);
+CREATE TABLE IF NOT EXISTS app_messages (
+  id TEXT PRIMARY KEY NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  read INTEGER NOT NULL DEFAULT 0,
+  source TEXT
+);
 `;
 
 function isNative(): boolean {
@@ -95,6 +103,18 @@ async function migrateFromDexieIfNeeded(): Promise<void> {
       ],
     );
   }
+  try {
+    const dexieMsgs = await db.appMessages.toArray();
+    for (const m of dexieMsgs) {
+      await sqlConn.run(
+        `INSERT OR REPLACE INTO app_messages (id, title, body, created_at, read, source) VALUES (?,?,?,?,?,?)`,
+        [m.id, m.title, m.body, m.createdAt, m.read ? 1 : 0, m.source ?? null],
+      );
+    }
+    if (dexieMsgs.length) await db.appMessages.clear();
+  } catch {
+    /* tabela app_messages pode não existir em Dexie antigo */
+  }
   await db.entries.clear();
   await db.profile.clear();
   try {
@@ -137,7 +157,27 @@ async function openSqlite(): Promise<void> {
     }
   }
   await migrateFromDexieIfNeeded();
+  await migrateMessagesFromDexieIfNeeded();
   useNativeSqlite = true;
+}
+
+async function migrateMessagesFromDexieIfNeeded(): Promise<void> {
+  if (!sqlConn) return;
+  const res = await sqlConn.query('SELECT COUNT(*) AS c FROM app_messages', []);
+  const c = Number((res.values?.[0] as Record<string, unknown> | undefined)?.c ?? 0);
+  if (c > 0) return;
+  try {
+    const fromDexie = await db.appMessages.toArray();
+    for (const m of fromDexie) {
+      await sqlConn.run(
+        `INSERT OR REPLACE INTO app_messages (id, title, body, created_at, read, source) VALUES (?,?,?,?,?,?)`,
+        [m.id, m.title, m.body, m.createdAt, m.read ? 1 : 0, m.source ?? null],
+      );
+    }
+    if (fromDexie.length) await db.appMessages.clear();
+  } catch {
+    /* Dexie já removido ou sem tabela */
+  }
 }
 
 export async function initStorage(): Promise<void> {
@@ -296,16 +336,23 @@ export async function clearAllData(): Promise<void> {
   if (useNativeSqlite && sqlConn) {
     await sqlConn.execute('DELETE FROM entries;', true);
     await sqlConn.execute('DELETE FROM profile;', true);
+    await sqlConn.execute('DELETE FROM app_messages;', true);
     return;
   }
   await db.profile.clear();
   await db.entries.clear();
+  await db.appMessages.clear();
 }
 
-export async function restoreData(profile: UserProfile | undefined, entries: WorkEntry[]): Promise<void> {
+export async function restoreData(
+  profile: UserProfile | undefined,
+  entries: WorkEntry[],
+  messages?: InAppMessage[],
+): Promise<void> {
   if (useNativeSqlite && sqlConn) {
     await sqlConn.execute('DELETE FROM entries;', true);
     await sqlConn.execute('DELETE FROM profile;', true);
+    await sqlConn.execute('DELETE FROM app_messages;', true);
     if (profile) {
       await sqlConn.run(
         `INSERT OR REPLACE INTO profile (id, name, role, hourly_rate, signature, theme, default_project, profile_photo,
@@ -341,10 +388,101 @@ export async function restoreData(profile: UserProfile | undefined, entries: Wor
         ],
       );
     }
+    if (messages?.length) {
+      for (const m of messages) {
+        await sqlConn.run(
+          `INSERT OR REPLACE INTO app_messages (id, title, body, created_at, read, source) VALUES (?,?,?,?,?,?)`,
+          [m.id, m.title, m.body, m.createdAt, m.read ? 1 : 0, m.source ?? null],
+        );
+      }
+    }
     return;
   }
   await db.profile.clear();
   await db.entries.clear();
+  await db.appMessages.clear();
   if (profile) await db.profile.put(profile);
   if (entries.length) await db.entries.bulkAdd(entries);
+  if (messages?.length) await db.appMessages.bulkPut(messages);
+}
+
+function mapMessageRow(row: Record<string, unknown>): InAppMessage {
+  return {
+    id: String(row.id ?? ''),
+    title: String(row.title ?? ''),
+    body: String(row.body ?? ''),
+    createdAt: Number(row.created_at ?? row.createdAt ?? 0),
+    read: Boolean(row.read === 1 || row.read === true),
+    source:
+      row.source != null && String(row.source).length > 0
+        ? (String(row.source) as InAppMessage['source'])
+        : undefined,
+  };
+}
+
+export async function loadAllMessages(): Promise<InAppMessage[]> {
+  if (useNativeSqlite && sqlConn) {
+    const res = await sqlConn.query(
+      'SELECT id, title, body, created_at, read, source FROM app_messages ORDER BY created_at DESC',
+      [],
+    );
+    const rows = (res.values ?? []) as Record<string, unknown>[];
+    return rows.map(mapMessageRow);
+  }
+  return db.appMessages.orderBy('createdAt').reverse().toArray();
+}
+
+export async function saveMessage(m: InAppMessage): Promise<void> {
+  if (useNativeSqlite && sqlConn) {
+    await sqlConn.run(
+      `INSERT OR REPLACE INTO app_messages (id, title, body, created_at, read, source) VALUES (?,?,?,?,?,?)`,
+      [m.id, m.title, m.body, m.createdAt, m.read ? 1 : 0, m.source ?? null],
+    );
+    return;
+  }
+  await db.appMessages.put(m);
+}
+
+export async function getMessage(id: string): Promise<InAppMessage | undefined> {
+  if (useNativeSqlite && sqlConn) {
+    const res = await sqlConn.query(
+      'SELECT id, title, body, created_at, read, source FROM app_messages WHERE id = ? LIMIT 1',
+      [id],
+    );
+    const row = res.values?.[0] as Record<string, unknown> | undefined;
+    return row ? mapMessageRow(row) : undefined;
+  }
+  return db.appMessages.get(id);
+}
+
+export async function deleteMessage(id: string): Promise<void> {
+  if (useNativeSqlite && sqlConn) {
+    await sqlConn.run('DELETE FROM app_messages WHERE id = ?', [id]);
+    return;
+  }
+  await db.appMessages.delete(id);
+}
+
+export async function markMessageRead(id: string, read: boolean): Promise<void> {
+  if (useNativeSqlite && sqlConn) {
+    await sqlConn.run('UPDATE app_messages SET read = ? WHERE id = ?', [read ? 1 : 0, id]);
+    return;
+  }
+  const row = await db.appMessages.get(id);
+  if (row) await db.appMessages.put({...row, read});
+}
+
+export async function markAllMessagesRead(): Promise<void> {
+  if (useNativeSqlite && sqlConn) {
+    await sqlConn.run('UPDATE app_messages SET read = 1', []);
+    return;
+  }
+  await db.appMessages.toCollection().modify({read: true});
+}
+
+/** Evita duplicados ao sincronizar (mesmo id). */
+export async function upsertMessages(rows: InAppMessage[]): Promise<void> {
+  for (const m of rows) {
+    await saveMessage(m);
+  }
 }

@@ -32,9 +32,20 @@ interface UserProfile {
   qrDataUrl?: string;
 }
 
+/** Mensagem na caixa de entrada (sync, push ou local) */
+export interface InAppMessage {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: number;
+  read: boolean;
+  source?: 'sync' | 'push' | 'local';
+}
+
 const db = new Dexie('GSITrackerDB') as Dexie & {
   entries: EntityTable<WorkEntry, 'id'>;
   profile: EntityTable<UserProfile, 'id'>;
+  appMessages: EntityTable<InAppMessage, 'id'>;
 };
 
 db.version(1).stores({
@@ -44,6 +55,11 @@ db.version(1).stores({
 db.version(2).stores({
   entries: '++id, monthKey, day',
   profile: 'id',
+});
+db.version(3).stores({
+  entries: '++id, monthKey, day',
+  profile: 'id',
+  appMessages: 'id, createdAt',
 });
 
 export type { WorkEntry, UserProfile };
