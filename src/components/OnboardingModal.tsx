@@ -56,45 +56,60 @@ export function OnboardingModal({ onComplete }: Props) {
   const [role, setRole] = useState<'Oficial' | 'Ajudante' | ''>('');
   const [hourlyRate, setHourlyRate] = useState('');
   const [photo, setPhoto] = useState<string | null>(null);
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  /** PDF original ou imagem (print / foto da ficha ou só do QR) */
+  const [fichaFile, setFichaFile] = useState<File | null>(null);
   const [pdfError, setPdfError] = useState('');
-  /** Foto só do QR (recorte da ficha) — lê o mesmo conteúdo que o encarregado escaneia */
+  /** Opcional: se o PDF não ler o QR, foto nítida só do quadradinho */
   const [qrPhotoFile, setQrPhotoFile] = useState<File | null>(null);
   /** Texto completo lido por outra app (Câmara, Qrafter…) — gera QR local com o mesmo payload */
   const [qrPayloadPasted, setQrPayloadPasted] = useState('');
   const [busy, setBusy] = useState(false);
   const photoRef = useRef<HTMLInputElement>(null);
-  const pdfRef = useRef<HTMLInputElement>(null);
+  const fichaRef = useRef<HTMLInputElement>(null);
   const qrPhotoRef = useRef<HTMLInputElement>(null);
+
+  const fichaIsPdf = fichaFile?.type === 'application/pdf';
+  const fichaIsImage =
+    !!fichaFile?.type && fichaFile.type.startsWith('image/');
 
   const canSubmit =
     name.trim().length > 1 &&
     (role === 'Oficial' || role === 'Ajudante') &&
     photo &&
-    pdfFile &&
+    fichaFile &&
+    (fichaIsPdf || fichaIsImage) &&
     parseFloat(hourlyRate.replace(',', '.')) > 0;
 
   const handleSubmit = async () => {
-    if (!canSubmit || !pdfFile || !photo) return;
+    if (!canSubmit || !fichaFile || !photo) return;
     setBusy(true);
     setPdfError('');
     try {
       let qrFromDoc: { payload: string; qrImageDataUrl: string } | null = null;
-      try {
-        qrFromDoc = await extractQrFromPdf(pdfFile);
-      } catch (err) {
-        console.warn('extractQrFromPdf', err);
+
+      if (fichaIsPdf) {
+        try {
+          qrFromDoc = await extractQrFromPdf(fichaFile);
+        } catch (err) {
+          console.warn('extractQrFromPdf', err);
+        }
+      } else if (fichaIsImage) {
+        try {
+          qrFromDoc = await extractQrFromImageFile(fichaFile);
+        } catch (e) {
+          console.warn('extractQrFromImageFile (ficha)', e);
+        }
       }
 
       if (!qrFromDoc && qrPhotoFile) {
         try {
           qrFromDoc = await extractQrFromImageFile(qrPhotoFile);
         } catch (e) {
-          console.warn('extractQrFromImageFile', e);
+          console.warn('extractQrFromImageFile (extra)', e);
         }
         if (!qrFromDoc) {
           setPdfError(
-            'Não foi possível ler o QR na foto. Use mais zoom no QR, boa luz e evite reflexos.',
+            'Não foi possível ler o QR na foto extra. Use mais zoom, boa luz e evite reflexos.',
           );
           setBusy(false);
           return;
@@ -117,31 +132,38 @@ export function OnboardingModal({ onComplete }: Props) {
       if (!qrFromDoc) {
         setPdfError(
           isLikelyIos()
-            ? 'No iPhone o PDF por vezes não lê o QR. Envie uma foto nítida só do QR (opção A) ou cole o texto completo lido com a Câmara/outra app (opção B). O conteúdo tem de ser o mesmo da ficha — o leitor do encarregado lê esse texto.'
-            : 'Não foi possível ler o QR no PDF. Use foto só do QR ou cole o texto lido por outra app.',
+            ? 'Não lemos o QR no ficheiro. Envie print/foto mais nítida do QR, ou foto extra só do quadradinho, ou cole o texto que a Câmara lê ao apontar ao QR.'
+            : 'Não foi possível ler o QR. Use PDF/imagem mais nítida, foto extra só do QR ou cole o texto lido por outra app.',
         );
         setBusy(false);
         return;
       }
 
-      const code =
-        (await extractEmployeeCodeFromPdf(pdfFile)) ??
-        codeFromQrPayload(qrFromDoc.payload);
+      let code: string | null = null;
+      if (fichaIsPdf) {
+        code =
+          (await extractEmployeeCodeFromPdf(fichaFile)) ??
+          codeFromQrPayload(qrFromDoc.payload);
+      } else {
+        code = codeFromQrPayload(qrFromDoc.payload);
+      }
       if (!code) {
         setPdfError(
-          'Código do colaborador (ex. GF…) não encontrado no PDF nem no conteúdo do QR. Confirme o PDF completo ou o texto colado.',
+          fichaIsPdf
+            ? 'Código GF não encontrado no PDF nem no conteúdo do QR. Confirme o ficheiro ou cole o texto completo do QR (opção B).'
+            : 'Código GF não encontrado no texto do QR. Envie também o PDF da ficha (onde o GF vem por escrito) ou cole na opção B o texto completo que a Câmara lê no QR.',
         );
         setBusy(false);
         return;
       }
 
-      const pdfB64 = await fileToBase64(pdfFile);
+      const docB64 = await fileToBase64(fichaFile);
       await onComplete({
         name: name.trim(),
         role: role as 'Oficial' | 'Ajudante',
         hourlyRate: parseFloat(hourlyRate.replace(',', '.')),
         profilePhoto: photo,
-        employeePdfBase64: pdfB64,
+        employeePdfBase64: docB64,
         employeeCode: code,
         qrDataUrl: qrFromDoc.qrImageDataUrl,
       });
@@ -255,26 +277,42 @@ export function OnboardingModal({ onComplete }: Props) {
 
           <div>
             <label className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500">
-              <FileUp size={12} /> PDF da ficha GSI (obrigatório)
+              <FileUp size={12} /> Ficha GSI — PDF ou imagem (obrigatório)
             </label>
+            <p className="mb-2 text-[10px] leading-relaxed text-slate-500">
+              Pode enviar o <strong className="text-slate-400">PDF original</strong> ou um{' '}
+              <strong className="text-slate-400">print / foto</strong> da ficha ou só do código QR
+              (desde que o QR seja legível na imagem).
+            </p>
             <input
-              ref={pdfRef}
+              ref={fichaRef}
               type="file"
-              accept="application/pdf"
+              accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.pdf,.jpg,.jpeg,.png,.webp,.heic"
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                setPdfFile(f || null);
+                if (
+                  f &&
+                  f.type !== 'application/pdf' &&
+                  !f.type.startsWith('image/')
+                ) {
+                  setPdfError('Use PDF ou imagem (JPG, PNG, etc.).');
+                  e.target.value = '';
+                  return;
+                }
+                setFichaFile(f || null);
                 setPdfError('');
                 e.target.value = '';
               }}
             />
             <button
               type="button"
-              onClick={() => pdfRef.current?.click()}
+              onClick={() => fichaRef.current?.click()}
               className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-left text-sm text-slate-300"
             >
-              {pdfFile ? pdfFile.name : 'Selecionar PDF da ficha…'}
+              {fichaFile
+                ? `${fichaFile.name}${fichaIsPdf ? ' (PDF)' : fichaIsImage ? ' (imagem)' : ''}`
+                : 'Selecionar PDF ou imagem da ficha / QR…'}
             </button>
             {pdfError && (
               <p className="mt-2 text-xs text-red-400">{pdfError}</p>
@@ -282,13 +320,13 @@ export function OnboardingModal({ onComplete }: Props) {
 
             <div className="mt-4 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
               <label className="mb-1 flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-emerald-200/90">
-                <QrCode size={12} /> Mesmo QR que o encarregado lê (se o PDF falhar)
+                <QrCode size={12} /> Ajuda extra (se o ficheiro acima não ler o QR)
               </label>
               <p className="mb-3 text-[10px] leading-relaxed text-slate-400">
-                O sistema do encarregado lê o <strong className="text-slate-300">conteúdo</strong> do
-                código QR da ficha (URL ou texto). A imagem na app pode ser gerada de novo, mas o{' '}
-                <strong className="text-slate-300">dado</strong> tem de ser o mesmo — não basta só o
-                código GF se o QR tiver um link longo.
+                O encarregado lê o <strong className="text-slate-300">mesmo conteúdo</strong> do QR da
+                ficha. Se mandar só imagem e não aparecer o código GF no texto do QR, pode precisar do{' '}
+                <strong className="text-slate-300">PDF</strong> ou de colar abaixo o texto que a
+                Câmara lê ao apontar ao QR.
               </p>
 
               <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">
@@ -298,7 +336,6 @@ export function OnboardingModal({ onComplete }: Props) {
                 ref={qrPhotoRef}
                 type="file"
                 accept="image/*"
-                capture="environment"
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
