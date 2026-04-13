@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gsi-tracker-v3';
+const CACHE_NAME = 'gsi-tracker-v4';
 const PRECACHE = ['./', './index.html'];
 
 self.addEventListener('install', (event) => {
@@ -19,8 +19,23 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.mode === 'navigate' || (req.method === 'GET' && req.headers.get('accept')?.includes('text/html'))) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          if (res.ok) {
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match(req).then((r) => r || caches.match('./index.html'))),
+    );
+    return;
+  }
   event.respondWith(
-    caches.match(event.request).then((response) => response || fetch(event.request)),
+    caches.match(req).then((response) => response || fetch(req)),
   );
 });
 
