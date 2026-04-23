@@ -22,7 +22,10 @@ import {
   MessageCircle,
   Share2,
   Sun,
-  Moon
+  Moon,
+  LayoutGrid,
+  ClipboardList,
+  ListChecks,
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -33,6 +36,7 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import SignatureCanvas from 'react-signature-canvas';
 import { db } from './lib/db';
+import { PremiumDashboard } from './components/PremiumDashboard';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -50,7 +54,8 @@ export default function App() {
   const [history, setHistory] = useState<{ month: string, hours: number, days: number }[]>([]);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [defaultProject, setDefaultProject] = useState('');
-  
+  const [dashboardTab, setDashboardTab] = useState<'summary' | 'form' | 'entries'>('summary');
+
   const pdfRef = useRef<HTMLDivElement>(null);
   const sigPad = useRef<SignatureCanvas>(null);
   const isInitialMount = useRef(true);
@@ -522,11 +527,19 @@ export default function App() {
     }
   };
 
+  const dashTabs = [
+    { id: 'summary' as const, label: 'Resumo', icon: LayoutGrid },
+    { id: 'form' as const, label: 'Registo', icon: ClipboardList },
+    { id: 'entries' as const, label: 'Marcações', icon: ListChecks },
+  ];
+
   return (
-    <div className={cn(
-      "min-h-screen transition-colors duration-300 pb-20",
-      theme === 'dark' ? "bg-black text-white" : "bg-white text-slate-900"
-    )}>
+    <div
+      className={cn(
+        'min-h-screen transition-colors duration-300 pb-24',
+        theme === 'dark' ? 'gsi-marble-bg text-white' : 'bg-slate-50 text-slate-900',
+      )}
+    >
       {/* PWA Install Banner */}
       <AnimatePresence>
         {showInstallBanner && (
@@ -571,22 +584,34 @@ export default function App() {
       </AnimatePresence>
 
       {/* Header */}
-      <header className={cn(
-        "backdrop-blur-md border-b sticky top-0 z-30 shadow-lg",
-        theme === 'dark' ? "bg-black/80 border-white/10" : "bg-white/80 border-slate-200"
-      )}>
+      <header
+        className={cn(
+          'sticky top-0 z-30 border-b backdrop-blur-xl',
+          theme === 'dark'
+            ? 'border-white/[0.06] bg-[#0a0a0c]/75 shadow-[0_4px_30px_rgba(0,0,0,0.35)]'
+            : 'border-slate-200/80 bg-white/90 shadow-sm',
+        )}
+      >
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className={cn(
-              "w-10 h-10 rounded-lg flex items-center justify-center text-white font-black text-2xl shadow-lg",
-              theme === 'dark' ? "bg-[#D4AF37] shadow-[#D4AF37]/50" : "bg-[#2563EB] shadow-[#2563EB]/50"
-            )}>
+            <div
+              className={cn(
+                'flex h-10 w-10 items-center justify-center rounded-xl text-lg font-black text-white shadow-lg',
+                theme === 'dark'
+                  ? 'bg-gradient-to-br from-[#c9a87c] to-[#8b6914] shadow-[#c9a87c]/25'
+                  : 'bg-[#2563EB] shadow-blue-500/30',
+              )}
+            >
               G
             </div>
-            <h1 className={cn(
-              "font-black text-xl tracking-tighter hidden sm:block",
-              theme === 'dark' ? "text-white" : "text-slate-900"
-            )}>GSI TRACKER</h1>
+            <h1
+              className={cn(
+                'hidden font-light tracking-wide sm:block sm:text-xl',
+                theme === 'dark' ? 'text-white/95' : 'text-slate-900',
+              )}
+            >
+              GSI <span className="font-semibold">TRACKER</span>
+            </h1>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4">
@@ -594,7 +619,7 @@ export default function App() {
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
               className={cn(
                 "p-2 rounded-full transition-all active:scale-90",
-                theme === 'dark' ? "bg-white/10 text-yellow-400 hover:bg-white/20" : "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                theme === 'dark' ? "bg-white/[0.06] text-[#c9a87c] hover:bg-white/10" : "bg-slate-200 text-slate-600 hover:bg-slate-300"
               )}
               title={theme === 'dark' ? "Mudar para Modo Claro" : "Mudar para Modo Escuro"}
             >
@@ -604,7 +629,7 @@ export default function App() {
             <button 
               onClick={shareToWhatsApp}
               disabled={isExporting}
-              className="flex items-center gap-2 bg-[#25D366] hover:bg-[#128C7E] text-white px-4 py-2 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50 shadow-[0_0_15px_rgba(37,211,102,0.3)]"
+              className="flex items-center gap-2 rounded-full bg-[#25D366] px-4 py-2 font-bold text-white shadow-[0_0_20px_rgba(37,211,102,0.25)] transition-all hover:bg-[#128C7E] active:scale-95 disabled:opacity-50"
               title="Compartilhar no WhatsApp"
             >
               {isExporting ? (
@@ -619,8 +644,10 @@ export default function App() {
               onClick={exportPDF}
               disabled={isExporting}
               className={cn(
-                "flex items-center gap-2 text-white px-6 py-2 rounded-full font-bold transition-all active:scale-95 disabled:opacity-50 shadow-lg",
-                theme === 'dark' ? "bg-[#D4AF37] hover:bg-[#b8962f] shadow-[#D4AF37]/30" : "bg-[#2563EB] hover:bg-[#1d4ed8] shadow-[#2563EB]/30"
+                'flex items-center gap-2 rounded-full px-6 py-2 font-bold text-white shadow-lg transition-all active:scale-95 disabled:opacity-50',
+                theme === 'dark'
+                  ? 'border border-[#c9a87c]/50 bg-gradient-to-r from-[#a08050] to-[#c9a87c] shadow-[#c9a87c]/20 hover:brightness-110'
+                  : 'bg-[#2563EB] shadow-blue-500/30 hover:bg-[#1d4ed8]',
               )}
             >
               {isExporting ? (
@@ -635,20 +662,65 @@ export default function App() {
               onClick={() => setIsSettingsOpen(true)}
               className={cn(
                 "p-2 rounded-full transition-colors",
-                theme === 'dark' ? "hover:bg-white/10 text-white/70" : "hover:bg-slate-100 text-slate-400"
+                theme === 'dark' ? "text-white/50 hover:bg-white/[0.06]" : "hover:bg-slate-100 text-slate-400"
               )}
             >
               <MoreVertical size={24} />
             </button>
           </div>
         </div>
+
+        <div
+          className={cn(
+            'max-w-5xl mx-auto flex gap-1 overflow-x-auto px-3 pb-3 pt-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+            theme === 'dark' ? 'border-b border-white/[0.04]' : 'border-b border-slate-200/60',
+          )}
+        >
+          {dashTabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setDashboardTab(id)}
+              className={cn(
+                'flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-[10px] font-bold uppercase tracking-wider transition-all',
+                dashboardTab === id
+                  ? theme === 'dark'
+                    ? 'border border-[#c9a87c]/40 bg-[#c9a87c]/15 text-[#e8d4bc] shadow-[0_0_20px_rgba(201,168,124,0.12)]'
+                    : 'border border-blue-200 bg-blue-50 text-blue-800'
+                  : theme === 'dark'
+                    ? 'text-white/40 hover:bg-white/[0.04]'
+                    : 'text-slate-500 hover:bg-slate-100',
+              )}
+            >
+              <Icon size={14} strokeWidth={2.2} />
+              {label}
+            </button>
+          ))}
+        </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        {/* User Info Card */}
+      <main className="max-w-5xl mx-auto px-4 py-6 sm:py-8">
+        {dashboardTab === 'summary' && (
+          <PremiumDashboard
+            currentDate={currentDate}
+            days={days}
+            entries={entries}
+            defaultProject={defaultProject}
+            setDefaultProject={setDefaultProject}
+            applyDefaultProject={applyDefaultProject}
+            totalHours={totalHours}
+            totalEarnings={totalEarnings}
+            hourlyRate={hourlyRate}
+            changeMonth={changeMonth}
+            theme={theme}
+          />
+        )}
+
+        {/* User Info Card — Registo */}
+        {dashboardTab === 'form' && (
         <section className={cn(
           "rounded-2xl p-6 shadow-xl border mb-8 transition-colors duration-300",
-          theme === 'dark' ? "bg-[#111111] border-white/5" : "bg-white border-slate-200"
+          theme === 'dark' ? "border-white/[0.06] bg-white/[0.03] backdrop-blur-md" : "bg-white border-slate-200 shadow-md"
         )}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
@@ -840,8 +912,9 @@ export default function App() {
             </div>
           </div>
         </section>
+        )}
 
-        {/* Daily Entries */}
+        {dashboardTab === 'entries' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between px-2">
             <h2 className={cn(
@@ -885,9 +958,9 @@ export default function App() {
                     className={cn(
                       "rounded-2xl p-4 shadow-xl border transition-all duration-300",
                       entries[dayNum]?.isOffDay 
-                        ? theme === 'dark' ? "border-white/5 bg-white/5 opacity-60" : "border-slate-100 bg-slate-50 opacity-60"
+                        ? theme === 'dark' ? "border-white/[0.04] bg-white/[0.02] opacity-60" : "border-slate-100 bg-slate-50 opacity-60"
                         : theme === 'dark' 
-                          ? isWeekend ? "border-[#D4AF37]/20 bg-black/80 hover:border-white/20" : "border-white/5 bg-black hover:border-white/20"
+                          ? isWeekend ? "border-[#c9a87c]/25 bg-white/[0.04] backdrop-blur-md hover:border-[#c9a87c]/40" : "border-white/[0.06] bg-white/[0.03] backdrop-blur-md hover:border-white/15"
                           : isWeekend ? "border-[#2563EB]/20 bg-slate-100 hover:border-slate-300" : "border-slate-200 bg-white hover:border-slate-300"
                     )}
                   >
@@ -897,8 +970,8 @@ export default function App() {
                         <div className={cn(
                           "w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black",
                           isWeekend 
-                            ? theme === 'dark' ? "bg-[#D4AF37] text-white shadow-[#D4AF37]/30" : "bg-[#2563EB] text-white shadow-[#2563EB]/30"
-                            : theme === 'dark' ? "bg-black text-white/60" : "bg-slate-200 text-slate-600"
+                            ? theme === 'dark' ? "bg-gradient-to-br from-[#c9a87c] to-[#7a5c32] text-white shadow-[#c9a87c]/25" : "bg-[#2563EB] text-white shadow-[#2563EB]/30"
+                            : theme === 'dark' ? "bg-white/[0.06] text-white/55" : "bg-slate-200 text-slate-600"
                         )}>
                           <span className="text-[10px] leading-none uppercase tracking-tighter">{format(day, 'EEE', { locale: ptBR })}</span>
                           <span className="text-xl leading-none">{dayNum}</span>
@@ -1052,6 +1125,7 @@ export default function App() {
             </AnimatePresence>
           </div>
         </div>
+        )}
       </main>
 
       {/* Settings & History Sheet */}
