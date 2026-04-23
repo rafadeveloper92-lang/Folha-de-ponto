@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Download, 
@@ -33,6 +33,9 @@ import {
   Shirt,
   Shield,
   Users,
+  LayoutGrid,
+  ClipboardList,
+  ListChecks,
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -60,7 +63,6 @@ import {
 import { playShortBeep } from './lib/beep';
 import { buildGsiPdfBlob } from './lib/buildGsiPdf';
 import { downloadPdfBlob, shareOrDownloadPdf } from './lib/pdfHelpers';
-import { gsi } from './gsi/colors';
 import {
   HoursDonut,
   TeamRadar,
@@ -80,6 +82,8 @@ import { AdminLoginModal } from './components/AdminLoginModal';
 import { AdminPanel } from './components/AdminPanel';
 import { SupervisorsContactPanel } from './components/SupervisorsContactPanel';
 import { isAdminSession } from './lib/adminAuth';
+import { PremiumDashboard } from './components/PremiumDashboard';
+import { DailyConfirmPanel } from './components/DailyConfirmPanel';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -121,6 +125,8 @@ export default function App() {
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [supportUnreadForAdmin, setSupportUnreadForAdmin] = useState(0);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const [dashboardSubTab, setDashboardSubTab] = useState<'summary' | 'form' | 'entries'>('summary');
+  const [focusDay, setFocusDay] = useState(() => new Date().getDate());
 
   const sigPad = useRef<SignatureCanvas>(null);
   const isInitialMount = useRef(true);
@@ -395,6 +401,22 @@ export default function App() {
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(currentDate);
   const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+
+  useEffect(() => {
+    const last = endOfMonth(currentDate).getDate();
+    setFocusDay((d) => Math.min(Math.max(1, d), last));
+  }, [monthKey, currentDate]);
+
+  const projectSuggestions = useMemo(() => {
+    const s = new Set<string>();
+    (Object.values(entries) as Partial<WorkDay>[]).forEach((e) => {
+      const p = e.project?.trim();
+      if (p && p !== 'FOLGA / FERIADO') s.add(p);
+    });
+    const d = defaultProject.trim();
+    if (d) s.add(d);
+    return Array.from(s).slice(0, 24);
+  }, [entries, defaultProject]);
 
   const hourOptions = Array.from({ length: 11 }, (_, i) => `${i + 5} horas`);
 
@@ -732,8 +754,8 @@ export default function App() {
 
   return (
     <div className={cn(
-      "min-h-screen transition-colors duration-300 pb-10",
-      theme === 'dark' ? "bg-black text-white" : "bg-slate-50 text-slate-900"
+      'min-h-screen transition-colors duration-300 pb-10',
+      theme === 'dark' ? 'gsi-marble-bg text-white' : 'bg-slate-50 text-slate-900',
     )}>
       <AnimatePresence>
         {showSplash && <SplashIntro key="splash-intro" />}
@@ -823,22 +845,34 @@ export default function App() {
       </AnimatePresence>
 
       {/* Header */}
-      <header className={cn(
-        "backdrop-blur-md border-b sticky top-0 z-30 shadow-lg",
-        theme === 'dark' ? "bg-black/80 border-white/10" : "bg-white/80 border-slate-200"
-      )}>
+      <header
+        className={cn(
+          'sticky top-0 z-30 border-b backdrop-blur-xl',
+          theme === 'dark'
+            ? 'border-white/[0.06] bg-[#0a0a0c]/75 shadow-[0_4px_30px_rgba(0,0,0,0.35)]'
+            : 'border-slate-200/80 bg-white/90 shadow-sm',
+        )}
+      >
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className={cn(
-              "w-10 h-10 rounded-lg flex items-center justify-center text-white font-black text-2xl shadow-lg",
-              theme === 'dark' ? "bg-[#D4AF37] shadow-[#D4AF37]/50" : "bg-[#2563EB] shadow-[#2563EB]/50"
-            )}>
+            <div
+              className={cn(
+                'flex h-10 w-10 items-center justify-center rounded-xl text-lg font-black text-white shadow-lg',
+                theme === 'dark'
+                  ? 'bg-gradient-to-br from-[#c9a87c] to-[#8b6914] shadow-[#c9a87c]/25'
+                  : 'bg-[#2563EB] shadow-blue-500/30',
+              )}
+            >
               G
             </div>
-            <h1 className={cn(
-              "font-black text-xl tracking-tighter hidden sm:block",
-              theme === 'dark' ? "text-white" : "text-slate-900"
-            )}>GSI TRACKER</h1>
+            <h1
+              className={cn(
+                'hidden font-light tracking-wide sm:block sm:text-xl',
+                theme === 'dark' ? 'text-white/95' : 'text-slate-900',
+              )}
+            >
+              GSI <span className="font-semibold">TRACKER</span>
+            </h1>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4">
@@ -846,7 +880,7 @@ export default function App() {
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
               className={cn(
                 "p-2 rounded-full transition-all active:scale-90",
-                theme === 'dark' ? "bg-white/10 text-yellow-400 hover:bg-white/20" : "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                theme === 'dark' ? "bg-white/[0.06] text-[#c9a87c] hover:bg-white/10" : "bg-slate-200 text-slate-600 hover:bg-slate-300"
               )}
               title={theme === 'dark' ? "Mudar para Modo Claro" : "Mudar para Modo Escuro"}
             >
@@ -856,7 +890,7 @@ export default function App() {
             <button 
               onClick={shareToWhatsApp}
               disabled={isExporting}
-              className="flex items-center gap-1.5 sm:gap-2 bg-[#25D366] hover:bg-[#128C7E] text-white px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-bold transition-all active:scale-95 disabled:opacity-50"
+              className="flex items-center gap-1.5 sm:gap-2 rounded-full bg-[#25D366] px-3 py-2 text-xs font-bold text-white shadow-[0_0_20px_rgba(37,211,102,0.25)] transition-all hover:bg-[#128C7E] active:scale-95 disabled:opacity-50 sm:gap-2 sm:px-4 sm:text-sm"
               title="Compartilhar PDF (WhatsApp ou outras apps)"
             >
               {isExporting ? (
@@ -871,8 +905,10 @@ export default function App() {
               onClick={exportPDF}
               disabled={isExporting}
               className={cn(
-                "flex items-center gap-1.5 sm:gap-2 text-white px-3 sm:px-5 py-2 rounded-full text-xs sm:text-sm font-bold transition-all active:scale-95 disabled:opacity-50 shadow-lg",
-                theme === 'dark' ? "bg-[#D4AF37] hover:bg-[#b8962f] shadow-[#D4AF37]/30" : "bg-[#2563EB] hover:bg-[#1d4ed8] shadow-[#2563EB]/30"
+                'flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-bold text-white shadow-lg transition-all active:scale-95 disabled:opacity-50 sm:gap-2 sm:px-5 sm:text-sm',
+                theme === 'dark'
+                  ? 'border border-[#c9a87c]/50 bg-gradient-to-r from-[#a08050] to-[#c9a87c] shadow-[#c9a87c]/20 hover:brightness-110'
+                  : 'bg-[#2563EB] shadow-blue-500/30 hover:bg-[#1d4ed8]',
               )}
               title="Descarregar PDF"
             >
@@ -929,13 +965,49 @@ export default function App() {
               onClick={() => setIsSettingsOpen(true)}
               className={cn(
                 "p-2 rounded-full transition-colors",
-                theme === 'dark' ? "hover:bg-white/10 text-white/70" : "hover:bg-slate-100 text-slate-400"
+                theme === 'dark' ? "text-white/50 hover:bg-white/[0.06]" : "hover:bg-slate-100 text-slate-400"
               )}
             >
               <MoreVertical size={24} />
             </button>
           </div>
         </div>
+
+        {activeTab === 'dashboard' && (
+          <div
+            className={cn(
+              'max-w-5xl mx-auto flex gap-1 overflow-x-auto px-3 pb-3 pt-1 scrollbar-hide',
+              theme === 'dark' ? 'border-b border-white/[0.04]' : 'border-b border-slate-200/60',
+            )}
+          >
+            {(
+              [
+                { id: 'summary' as const, label: 'Resumo', icon: LayoutGrid },
+                { id: 'form' as const, label: 'Registo', icon: ClipboardList },
+                { id: 'entries' as const, label: 'Marcações', icon: ListChecks },
+              ] as const
+            ).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setDashboardSubTab(id)}
+                className={cn(
+                  'flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-[10px] font-bold uppercase tracking-wider transition-all',
+                  dashboardSubTab === id
+                    ? theme === 'dark'
+                      ? 'border border-[#c9a87c]/40 bg-[#c9a87c]/15 text-[#e8d4bc] shadow-[0_0_20px_rgba(201,168,124,0.12)]'
+                      : 'border border-blue-200 bg-blue-50 text-blue-800'
+                    : theme === 'dark'
+                      ? 'text-white/40 hover:bg-white/[0.04]'
+                      : 'text-slate-500 hover:bg-slate-100',
+                )}
+              >
+                <Icon size={14} strokeWidth={2.2} />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
       <input
@@ -951,7 +1023,6 @@ export default function App() {
           'max-w-5xl mx-auto px-4 py-6 pb-28',
           isDarkUi && 'min-h-screen',
         )}
-        style={isDarkUi ? { background: gsi.navyBg } : undefined}
       >
         <nav
           className={cn(
@@ -1233,71 +1304,89 @@ export default function App() {
 
         {activeTab === 'dashboard' && (
           <>
-            <GsiDashboardHero
-              name={name}
-              setName={setName}
-              role={role || 'Oficial'}
-              setRole={(r) => setRole(r)}
-              profilePhoto={profilePhoto}
-              onPickPhoto={() => photoInputRef.current?.click()}
-              isDark={isDarkUi}
-              roleLocked={roleLocked}
-              qrDataUrl={qrDataUrl}
-              onQrClick={
-                qrDataUrl ? () => setQrLightboxOpen(true) : undefined
-              }
-            />
+            {dashboardSubTab === 'summary' && (
+              <PremiumDashboard
+                currentDate={currentDate}
+                days={days}
+                entries={entries}
+                defaultProject={defaultProject}
+                setDefaultProject={setDefaultProject}
+                applyDefaultProject={applyDefaultProject}
+                totalHours={totalHours}
+                totalEarnings={totalEarnings}
+                hourlyRate={hourlyRate}
+                changeMonth={changeMonth}
+                theme={theme}
+              />
+            )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-              <div
-                className={cn(
-                  'rounded-3xl border p-4 lg:col-span-1',
-                  isDarkUi
-                    ? 'border-blue-500/20 bg-[#151d32]'
-                    : 'bg-white border-slate-200 shadow-sm',
-                )}
-              >
-                <p
+            {dashboardSubTab === 'form' && (
+              <>
+                <GsiDashboardHero
+                  name={name}
+                  setName={setName}
+                  role={role || 'Oficial'}
+                  setRole={(r) => setRole(r)}
+                  profilePhoto={profilePhoto}
+                  onPickPhoto={() => photoInputRef.current?.click()}
+                  isDark={isDarkUi}
+                  roleLocked={roleLocked}
+                  qrDataUrl={qrDataUrl}
+                  onQrClick={
+                    qrDataUrl ? () => setQrLightboxOpen(true) : undefined
+                  }
+                />
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                  <div
+                    className={cn(
+                      'rounded-3xl border p-4 lg:col-span-1',
+                      isDarkUi
+                        ? 'border-blue-500/20 bg-[#151d32]'
+                        : 'bg-white border-slate-200 shadow-sm',
+                    )}
+                  >
+                    <p
+                      className={cn(
+                        'text-[10px] font-black uppercase tracking-widest mb-2',
+                        isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                      )}
+                    >
+                      Total de horas (mês)
+                    </p>
+                    <HoursDonut totalHours={totalHours} />
+                  </div>
+                  <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <MiniBarValue
+                      label="Valor estimado"
+                      value={`€${totalEarnings.toFixed(2)}`}
+                      isDark={isDarkUi}
+                    />
+                    <MiniBarValue
+                      label="Dias registados"
+                      value={`${Object.keys(entries).length}`}
+                      isDark={isDarkUi}
+                    />
+                  </div>
+                </div>
+
+                <div
                   className={cn(
-                    'text-[10px] font-black uppercase tracking-widest mb-2',
-                    isDarkUi ? 'text-slate-500' : 'text-slate-400',
+                    'rounded-3xl border p-4 mb-6',
+                    isDarkUi
+                      ? 'border-blue-500/20 bg-[#151d32]'
+                      : 'bg-white border-slate-200',
                   )}
                 >
-                  Total de horas (mês)
-                </p>
-                <HoursDonut totalHours={totalHours} />
-              </div>
-              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <MiniBarValue
-                  label="Valor estimado"
-                  value={`€${totalEarnings.toFixed(2)}`}
-                  isDark={isDarkUi}
-                />
-                <MiniBarValue
-                  label="Dias registados"
-                  value={`${Object.keys(entries).length}`}
-                  isDark={isDarkUi}
-                />
-              </div>
-            </div>
-
-            <div
-              className={cn(
-                'rounded-3xl border p-4 mb-6',
-                isDarkUi
-                  ? 'border-blue-500/20 bg-[#151d32]'
-                  : 'bg-white border-slate-200',
-              )}
-            >
-              <MonthHeatmap
-                year={currentDate.getFullYear()}
-                month={currentDate.getMonth() + 1}
-                intensityByDay={heatIntensity}
-              />
-              <p className="mt-4 text-center text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                Próximos passos: finalize as marcações pendentes
-              </p>
-            </div>
+                  <MonthHeatmap
+                    year={currentDate.getFullYear()}
+                    month={currentDate.getMonth() + 1}
+                    intensityByDay={heatIntensity}
+                  />
+                  <p className="mt-4 text-center text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    Próximos passos: finalize as marcações pendentes
+                  </p>
+                </div>
 
         <section className={cn(
           "rounded-2xl p-6 shadow-xl border mb-8 transition-colors duration-300",
@@ -1411,7 +1500,24 @@ export default function App() {
             </div>
           </div>
         </section>
+              </>
+            )}
 
+            {dashboardSubTab === 'entries' && (
+              <>
+        <DailyConfirmPanel
+          theme={theme}
+          days={days}
+          entries={entries}
+          focusDay={focusDay}
+          setFocusDay={setFocusDay}
+          hourOptions={hourOptions}
+          onHours={(d, v) => handleInputChange(d, 'hours', v)}
+          onProject={(d, v) => handleInputChange(d, 'project', v)}
+          onConfirm={handleMarkDay}
+          onOffDay={handleMarkOffDay}
+          onCopyPrevious={copyPrevious}
+        />
         {/* Daily Entries */}
         <div className="space-y-4">
           <div className="flex items-center justify-between px-2">
@@ -1456,9 +1562,9 @@ export default function App() {
                     className={cn(
                       "rounded-2xl p-4 shadow-xl border transition-all duration-300",
                       entries[dayNum]?.isOffDay 
-                        ? theme === 'dark' ? "border-white/5 bg-white/5 opacity-60" : "border-slate-100 bg-slate-50 opacity-60"
+                        ? theme === 'dark' ? "border-white/[0.04] bg-white/[0.02] opacity-60" : "border-slate-100 bg-slate-50 opacity-60"
                         : theme === 'dark' 
-                          ? isWeekend ? "border-[#D4AF37]/20 bg-black/80 hover:border-white/20" : "border-white/5 bg-black hover:border-white/20"
+                          ? isWeekend ? "border-[#c9a87c]/25 bg-white/[0.04] backdrop-blur-md hover:border-[#c9a87c]/40" : "border-white/[0.06] bg-white/[0.03] backdrop-blur-md hover:border-white/15"
                           : isWeekend ? "border-[#2563EB]/20 bg-slate-100 hover:border-slate-300" : "border-slate-200 bg-white hover:border-slate-300"
                     )}
                   >
@@ -1468,8 +1574,8 @@ export default function App() {
                         <div className={cn(
                           "w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black",
                           isWeekend 
-                            ? theme === 'dark' ? "bg-[#D4AF37] text-white shadow-[#D4AF37]/30" : "bg-[#2563EB] text-white shadow-[#2563EB]/30"
-                            : theme === 'dark' ? "bg-black text-white/60" : "bg-slate-200 text-slate-600"
+                            ? theme === 'dark' ? "bg-gradient-to-br from-[#c9a87c] to-[#7a5c32] text-white shadow-[#c9a87c]/25" : "bg-[#2563EB] text-white shadow-[#2563EB]/30"
+                            : theme === 'dark' ? "bg-white/[0.06] text-white/55" : "bg-slate-200 text-slate-600"
                         )}>
                           <span className="text-[10px] leading-none uppercase tracking-tighter">{format(day, 'EEE', { locale: ptBR })}</span>
                           <span className="text-xl leading-none">{dayNum}</span>
@@ -1623,6 +1729,8 @@ export default function App() {
             </AnimatePresence>
           </div>
         </div>
+              </>
+            )}
           </>
         )}
       </main>
