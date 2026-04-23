@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Download, 
@@ -37,6 +37,7 @@ import { jsPDF } from 'jspdf';
 import SignatureCanvas from 'react-signature-canvas';
 import { db } from './lib/db';
 import { PremiumDashboard } from './components/PremiumDashboard';
+import { DailyConfirmPanel } from './components/DailyConfirmPanel';
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -55,6 +56,7 @@ export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [defaultProject, setDefaultProject] = useState('');
   const [dashboardTab, setDashboardTab] = useState<'summary' | 'form' | 'entries'>('summary');
+  const [focusDay, setFocusDay] = useState(() => new Date().getDate());
 
   const pdfRef = useRef<HTMLDivElement>(null);
   const sigPad = useRef<SignatureCanvas>(null);
@@ -188,6 +190,22 @@ export default function App() {
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(currentDate);
   const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+
+  useEffect(() => {
+    const last = days.length ? days[days.length - 1]!.getDate() : 31;
+    setFocusDay((d) => Math.min(Math.max(1, d), last));
+  }, [days]);
+
+  const projectSuggestions = useMemo(() => {
+    const s = new Set<string>();
+    (Object.values(entries) as Partial<WorkDay>[]).forEach((e) => {
+      const p = e.project?.trim();
+      if (p && p !== 'FOLGA / FERIADO') s.add(p);
+    });
+    const d = defaultProject.trim();
+    if (d) s.add(d);
+    return Array.from(s).slice(0, 24);
+  }, [entries, defaultProject]);
 
   const hourOptions = Array.from({ length: 11 }, (_, i) => `${i + 5} horas`);
 
@@ -916,6 +934,19 @@ export default function App() {
 
         {dashboardTab === 'entries' && (
         <div className="space-y-4">
+          <DailyConfirmPanel
+            theme={theme}
+            days={days}
+            entries={entries}
+            focusDay={focusDay}
+            setFocusDay={setFocusDay}
+            hourOptions={hourOptions}
+            onHours={(d, v) => handleInputChange(d, 'hours', v)}
+            onProject={(d, v) => handleInputChange(d, 'project', v)}
+            onConfirm={handleMarkDay}
+            onOffDay={handleMarkOffDay}
+            onCopyPrevious={copyPrevious}
+          />
           <div className="flex items-center justify-between px-2">
             <h2 className={cn(
               "text-xs font-black uppercase tracking-[0.2em]",
@@ -1472,6 +1503,9 @@ export default function App() {
       </div>
       <datalist id="project-options">
         <option value="San Carlos Can Brisa" />
+        {projectSuggestions.map((p) => (
+          <option key={p} value={p} />
+        ))}
       </datalist>
     </div>
   );

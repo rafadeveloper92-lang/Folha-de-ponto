@@ -1,9 +1,19 @@
-import React, {useId, useMemo} from 'react';
-import {format, getISOWeek, startOfWeek, addDays, isSameMonth} from 'date-fns';
+import React, {useMemo} from 'react';
+import {
+  format,
+  getISOWeek,
+  startOfWeek,
+  addDays,
+  isSameMonth,
+  endOfMonth,
+  startOfDay,
+  differenceInCalendarDays,
+} from 'date-fns';
 import {ptBR} from 'date-fns/locale';
-import {Clock, MapPin, TrendingUp, Target, Sparkles} from 'lucide-react';
+import {Clock, MapPin, TrendingUp, Target, Sparkles, CalendarDays, Wallet} from 'lucide-react';
 import type {WorkDay} from '../types';
 import {cn} from '../lib/utils';
+import {SemiGauge} from './SemiGauge';
 
 function parseHours(h?: string): number {
   if (!h) return 0;
@@ -38,7 +48,6 @@ export function PremiumDashboard({
   changeMonth,
   theme,
 }: Props) {
-  const gid = useId().replace(/:/g, '');
   const isDark = theme === 'dark';
 
   const markedDays = useMemo(() => {
@@ -106,8 +115,28 @@ export function PremiumDashboard({
   const avgDaily =
     markedDays > 0 ? Math.round((totalHours / markedDays) * 100) / 100 : 0;
   const goalHours = 160;
-  const gaugeMonth = Math.min(100, Math.round((totalHours / goalHours) * 100));
-  const gaugeAvg = Math.min(100, Math.round((avgDaily / 12) * 100));
+  const fracMonth = Math.min(1, totalHours / goalHours);
+  const fracAvg = Math.min(1, avgDaily / 12);
+
+  const today = startOfDay(new Date());
+  const nowY = today.getFullYear();
+  const nowM = today.getMonth();
+  const lastOfRealMonth = endOfMonth(today).getDate();
+  const closingDayNum = Math.min(30, lastOfRealMonth);
+  const closingThisMonthReal = startOfDay(new Date(nowY, nowM, closingDayNum));
+
+  const nextPayDate = (from: Date) => {
+    const d = startOfDay(from);
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const fifteenth = startOfDay(new Date(y, m, 15));
+    if (d.getTime() <= fifteenth.getTime()) return fifteenth;
+    return startOfDay(new Date(y, m + 1, 15));
+  };
+  const nextPayment = nextPayDate(today);
+
+  const daysToClose = differenceInCalendarDays(closingThisMonthReal, today);
+  const daysToPay = differenceInCalendarDays(nextPayment, today);
 
   const glass = isDark
     ? 'border border-white/[0.08] bg-white/[0.04] shadow-[0_8px_32px_rgba(0,0,0,0.45)] backdrop-blur-xl'
@@ -153,6 +182,50 @@ export function PremiumDashboard({
       </div>
 
       <div className={cn('rounded-3xl p-5', glass, roseGlow)}>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row">
+          <div
+            className={cn(
+              'flex min-w-0 flex-1 items-start gap-2 rounded-2xl border p-3',
+              t('border-white/10 bg-black/25', 'border-slate-200 bg-slate-50'),
+            )}
+          >
+            <CalendarDays className={cn('mt-0.5 h-4 w-4 shrink-0', rose)} />
+            <div className="min-w-0">
+              <p className={cn('text-[9px] font-black uppercase tracking-wider', rose)}>Fecho da folha</p>
+              <p className={cn('text-xs font-medium leading-snug', t('text-white/85', 'text-slate-800'))}>
+                A empresa fecha a folha no <span className="font-semibold">final do mês (dia {closingDayNum})</span>.
+              </p>
+              <p className={cn('mt-1 text-[10px]', t('text-white/40', 'text-slate-500'))}>
+                {daysToClose > 0
+                  ? `Faltam ${daysToClose} dia${daysToClose !== 1 ? 's' : ''} para o fecho (${format(closingThisMonthReal, "d 'de' MMMM", {locale: ptBR})}).`
+                  : daysToClose === 0
+                    ? 'Hoje é o dia de fecho — confirme as marcações.'
+                    : `O fecho deste mês (${format(closingThisMonthReal, 'd MMM', {locale: ptBR})}) já passou.`}
+              </p>
+            </div>
+          </div>
+          <div
+            className={cn(
+              'flex min-w-0 flex-1 items-start gap-2 rounded-2xl border p-3',
+              t('border-emerald-500/20 bg-emerald-500/5', 'border-emerald-200 bg-emerald-50/80'),
+            )}
+          >
+            <Wallet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+            <div className="min-w-0">
+              <p className="text-[9px] font-black uppercase tracking-wider text-emerald-400/90">Pagamento</p>
+              <p className={cn('text-xs font-medium leading-snug', t('text-white/85', 'text-slate-800'))}>
+                O pagamento é efetuado no <span className="font-semibold">dia 15</span> de cada mês.
+              </p>
+              <p className={cn('mt-1 text-[10px]', t('text-white/40', 'text-slate-500'))}>
+                {daysToPay > 0
+                  ? `Próximo pagamento: ${format(nextPayment, "d 'de' MMMM yyyy", {locale: ptBR})} — faltam ${daysToPay} dia${daysToPay !== 1 ? 's' : ''}.`
+                  : daysToPay === 0
+                    ? 'Hoje é dia de pagamento.'
+                    : 'O último dia 15 já passou; o próximo será no mês seguinte.'}
+              </p>
+            </div>
+          </div>
+        </div>
         <div className="mb-4 flex items-center justify-between">
           <span className={cn('text-[10px] font-black uppercase tracking-widest', rose)}>
             Dias registados
@@ -297,68 +370,24 @@ export function PremiumDashboard({
 
       <div className="grid grid-cols-2 gap-3">
         <div className={cn('rounded-3xl p-4', glass)}>
-          <p className={cn('mb-2 text-[9px] font-black uppercase tracking-wider', rose)}>Horas no mês</p>
-          <div className="relative mx-auto h-24 w-full max-w-[140px]">
-            <svg viewBox="0 0 100 56" className="h-full w-full">
-              <path
-                d="M 10 50 A 40 40 0 0 1 90 50"
-                fill="none"
-                stroke={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.1)'}
-                strokeWidth="8"
-                strokeLinecap="round"
-              />
-              <path
-                d="M 10 50 A 40 40 0 0 1 90 50"
-                fill="none"
-                stroke={`url(#gM-${gid})`}
-                strokeWidth="8"
-                strokeLinecap="round"
-                strokeDasharray={`${(gaugeMonth / 100) * 126} 126`}
-              />
-              <defs>
-                <linearGradient id={`gM-${gid}`} x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#c9a87c" />
-                  <stop offset="100%" stopColor="#8b6914" />
-                </linearGradient>
-              </defs>
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-end pb-1">
-              <span className={cn('text-xl font-extralight', t('text-white', 'text-slate-900'))}>{totalHours}</span>
-              <span className={cn('text-[8px] uppercase', t('text-white/35', 'text-slate-500'))}>meta {goalHours}h</span>
-            </div>
-          </div>
+          <SemiGauge
+            theme={theme}
+            accent="rose"
+            fraction={fracMonth}
+            label="Horas no mês"
+            valueText={`${totalHours} h`}
+            sublabel={`meta ${goalHours} h`}
+          />
         </div>
         <div className={cn('rounded-3xl p-4', glass)}>
-          <p className={cn('mb-2 text-[9px] font-black uppercase tracking-wider', rose)}>Média / dia útil</p>
-          <div className="relative mx-auto h-24 w-full max-w-[140px]">
-            <svg viewBox="0 0 100 56" className="h-full w-full">
-              <path
-                d="M 10 50 A 40 40 0 0 1 90 50"
-                fill="none"
-                stroke={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.1)'}
-                strokeWidth="8"
-                strokeLinecap="round"
-              />
-              <path
-                d="M 10 50 A 40 40 0 0 1 90 50"
-                fill="none"
-                stroke={`url(#gA-${gid})`}
-                strokeWidth="8"
-                strokeLinecap="round"
-                strokeDasharray={`${(gaugeAvg / 100) * 126} 126`}
-              />
-              <defs>
-                <linearGradient id={`gA-${gid}`} x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#34d399" />
-                  <stop offset="100%" stopColor="#059669" />
-                </linearGradient>
-              </defs>
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-end pb-1">
-              <span className={cn('text-xl font-extralight', t('text-white', 'text-slate-900'))}>{avgDaily}</span>
-              <span className={cn('text-[8px] uppercase', t('text-white/35', 'text-slate-500'))}>h / dia marc.</span>
-            </div>
-          </div>
+          <SemiGauge
+            theme={theme}
+            accent="emerald"
+            fraction={fracAvg}
+            label="Média / dia marc."
+            valueText={`${avgDaily}`}
+            sublabel="máx. ref. 12 h"
+          />
         </div>
       </div>
 
